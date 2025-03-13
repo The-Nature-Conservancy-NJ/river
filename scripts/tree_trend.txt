@@ -1,0 +1,28 @@
+
+model{
+
+  # likelihood
+  for( i in 1:N ){
+  tdiff[i] ~ dnorm(mu[i], pow(sigma, -2))
+  mu[i] <- beta0[month[i]] + beta.year[month[i]]*(year[i]-year_mean)
+  }
+  
+  # hyper priors
+  for(i in 5:9){
+  beta0[i] ~ dnorm(mu.beta0, pow(sigma.beta0, -2))
+  beta.year[i] ~ dnorm(mu.beta.year, pow(sigma.beta.year, -2))
+  }
+  
+  # priors
+  sigma ~ dunif(0, 50)
+  mu.beta0 ~ dnorm(0, 1.0E-06)
+  mu.beta.year ~ dnorm(0, 1.0E-06)
+  sigma.beta0 ~ dunif(0, 50)
+  sigma.beta.year ~ dunif(0, 50)
+
+  # derrived
+  for(i in 1:n_yr){
+  diff_pred[i] <- mu.beta0 + mu.beta.year*(i-year_mean)
+  }
+  
+}

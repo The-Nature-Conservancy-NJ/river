@@ -1,0 +1,1753 @@
+---
+title: "Task 2. migratory species"
+author: "Mike Allen"
+date: "2/28/2022"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+# How to run this code
+Run the first section ("chunk") of this Rmd document (section 2.0). That will load all libraries, functions, and data. After that, you can scroll down to the plot or table you wish to make or the model you wish to run and run just that section. Plots, tables and models are labeled with letters (A-Z) and correspond to those in the "Task 2" sub-folder in the "output" folder. See the README file in that sub-folder for figure captions and information.
+
+The following text is a general description of Task 2.
+
+# Task 2 description: Site specific water quality conditions important to us other than SWQS
+a. Determine which sites are more supportive of migrating species during key lifecycle periods over time:
+spring adult migration (~ 15 Apr - 15 May) 
+spring spawning (~ 16-31 May)
+summer fry stage (~ 1 Jun - 15 Sep; ~ 1 mo. larval, ~ 3 mo. juv.)
+fall fry migration (~ 16 Sep - 30 Nov)
+
+i. What is the daily min, max, mean temperature and dissolved oxygen?
+
+b. Determine which sites are more likely not to thermally stress sensitive species during peak summer temperatures?
+i. For the period of July 1- Sept 15
+1. What’s the daily max?
+
+c. What is the daily mean, min, and max temperatures?
+
+d. What is the monthly mean temperature?
+
+e. What is the annual mean temperature?
+
+f. Are there significant changes to daily, monthly and annual mean temperature and dissolved oxygen over time (year to year, across all years sampled)?
+
+g. How can we characterize seasonal variation over time and what differences, or patterns do we see in seasonal variation across the years?
+
+Products:
+• Evaluate the water quality characteristics highlighted in Task 2 with respect to the needs of key migratory species.
+• Meetings as needed to refine objectives and desired outputs.
+• Data visualization (figures, maps, plots) and statistical analysis to compare same across sites and assess trends through time, along with associated interpretative text.
+
+# 2.0 Load libraries, format data, etc.
+```{r}
+library(dplyr)
+library(knitr)
+library(kableExtra)
+library(wesanderson)
+library(lubridate)
+library(ggplot2)
+library(forcats)
+library(lme4)
+library(ggeffects)
+library(here)
+library(dfoptim)
+'%notin%' <- Negate('%in%')
+
+# read in compiled logger data (including flagged data)
+p <- readRDS("output/compiled_logger_data.rds") %>%
+  mutate(order = as.numeric(substr(site, 5, 6)),
+         site = fct_reorder(site, order))
+
+# list of sites to exclude from "fish season" analyses
+exclude <- c("TNC_2", "TNC_10", "TNC_8", 
+             "TNC_5", "TNC_4", "TNC_28")
+
+# format final compiled temperature data
+tdata <- p %>%
+  filter(FLAG_Temp == 0) %>%
+  mutate(day = yday(datetime),
+         month = month(datetime),
+         hour = hour(datetime),
+         minute = minute(datetime),
+         dtime = hour + minute/60) %>%
+  # remove obvious outliers at start of time series
+  filter(as.logical(1-(site == "TNC_25" & 
+                         year == 2018 & 
+                         day == 122))) %>%
+  filter(as.logical(1-(site == "TNC_23" & 
+                         year == 2018 & 
+                         day == 122))) %>%
+  filter(as.logical(1-(site == "TNC_23" & 
+                         year == 2021 & 
+                         day == 118))) %>%
+  arrange(site, year, day) %>%
+  # peak movement ~ 15 April - 15 May in Raritan per RU data
+  # dates als based on MD extension ref
+  mutate(season = case_when(day %in% 105:135 ~ "migrate", #4/15-5/15
+                            day %in% 136:151 ~ "spawn", #5/16-5/31
+                            day %in% 152:181 ~ "larvae", #6/1-6/30
+                            day %in% 182:258 ~ "juvenile", #7/1-9/15
+                            day %in% 259:334 ~ "fall_mig"), #9/15-11
+         yearf = as.factor(year),
+         dayf = as.factor(day),
+         hourf = as.factor(hour),
+         season = as.factor(season))
+
+# summarize data by day
+tsum <- tdata %>%
+    group_by(site, yearf, month, day, dayf) %>%
+  summarise(min_temp = min(temp, na.rm = T),
+            max_temp = max(temp, na.rm = T),
+            mean_temp = mean(temp, na.rm = T),
+            .groups = "drop") 
+
+tsum_exclude <- tsum %>%
+    filter(site %notin% exclude)
+
+# summarize daily temp data by month
+tsum_month <- tsum %>%
+  group_by(site, yearf, month) %>%
+  summarize(mean_mean = mean(mean_temp),
+            mean_max = mean(max_temp),
+            mean_min = mean(min_temp),
+            n = length(mean_temp),
+            .groups = "drop") %>%
+  mutate(mid = case_when(month == 3 ~ yday("2021-03-15"),
+                         month == 4 ~ yday("2021-04-15"),
+                         month == 5 ~ yday("2021-05-15"),
+                         month == 6 ~ yday("2021-06-15"),
+                         month == 7 ~ yday("2021-07-15"),
+                         month == 8 ~ yday("2021-08-15"),
+                         month == 9 ~ yday("2021-09-15"),
+                         month == 10 ~ yday("2021-10-15"),
+                         month == 11 ~ yday("2021-11-15")
+                         )) %>%
+  mutate(Month = case_when(month == 4 ~ "April",
+                           month == 5 ~ "May",
+                           month == 6 ~ "June",
+                           month == 7 ~ "July",
+                           month == 8 ~ "August",
+                           month == 9 ~ "September",
+                           month == 10 ~ "October",
+                           month == 11 ~ "November",
+                           month == 12 ~ "December"))
+
+tsum_month_exclude <- tsum_month %>%  
+  filter(site %notin% exclude)
+
+# summarize daily temp data by fish life history season
+tsum_season <- tdata %>%
+    group_by(site, yearf, season, day, dayf) %>%
+  summarise(min_temp = min(temp, na.rm = T),
+            max_temp = max(temp, na.rm = T),
+            mean_temp = mean(temp, na.rm = T),
+            .groups = "drop")  %>%
+  group_by(site, yearf, season) %>%
+  summarize(mean_mean = mean(mean_temp),
+            mean_max = mean(max_temp),
+            mean_min = mean(min_temp),
+            max_max = max(max_temp),
+            min_min = min(min_temp),
+            n = length(mean_temp),
+            .groups = "drop") %>%
+  mutate(order = case_when(season == "migrate" ~ 1,
+                           season == "spawn" ~ 2,
+                           season == "larvae" ~ 3,
+                           season == "juvenile" ~ 4,
+                           season == "fall_mig" ~ 5),
+         season2 = case_when(season == "migrate" ~ "Migrate (S)",
+                           season == "spawn" ~ "Spawn",
+                           season == "larvae" ~ "Larvae",
+                           season == "juvenile" ~ "Juvenile",
+                           season == "fall_mig" ~ "Migrate (F)"),
+         season2 = fct_reorder(season2, order))
+
+tsum_season_exclude <- tsum_season %>%
+  filter(site %notin% exclude)
+
+# format final compiled DO data
+dodata <- p %>%
+  filter(FLAG_DO == 0) %>%
+  mutate(day = yday(datetime),
+         month = month(datetime),
+         hour = hour(datetime),
+         minute = minute(datetime),
+         dtime = hour + minute/60,
+         do_adj2 = case_when((is.na(do)==F & is.na(do_adj)==T) ~
+                               do,
+                             TRUE ~ do_adj),
+         adj = case_when(is.na(do_adj)==F ~ 1,
+                         TRUE ~ 0)) %>%
+  select(-do, -do_adj) %>%
+  rename(do = do_adj2) %>%
+  # right_join(expand.grid(site = unique(p$site), 
+  #                        year = 2016:2021, day = 82:339)) %>%
+  arrange(site, year, day) %>%
+    # Dates based on Anthony V. and shad reference he provided
+  mutate(season = case_when(day %in% 105:135 ~ "migrate", #4/15-5/15
+                            day %in% 136:151 ~ "spawn", #5/16-5/31
+                            day %in% 152:181 ~ "larvae", #6/1-6/30
+                            day %in% 182:258 ~ "juvenile", #7/1-9/15
+                            day %in% 259:334 ~ "fall_mig"), #9/15-11
+         yearf = as.factor(year),
+         dayf = as.factor(day),
+         hourf = as.factor(hour))
+  
+# summarize DO data by day
+dosum <- dodata %>%
+    group_by(site, yearf, month, day, dayf) %>%
+  summarise(min_do = min(do, na.rm = T),
+            mean_do = mean(do, na.rm = T),
+            max_do = max(do, na.rm = T),
+            .groups = "drop") %>%
+  arrange(site, yearf, day)
+
+dosum_exclude <- dosum %>%
+  filter(site %notin% exclude)
+
+# summarize daily DO data by month
+dosum_month <- dosum %>%
+  group_by(site, yearf, month) %>%
+  summarize(mean_mean = mean(mean_do),
+            mean_max = mean(max_do),
+            mean_min = mean(min_do),
+            n = length(mean_do),
+            .groups = "drop") %>%
+  mutate(mid = case_when(month == 3 ~ yday("2021-03-15"),
+                         month == 4 ~ yday("2021-04-15"),
+                         month == 5 ~ yday("2021-05-15"),
+                         month == 6 ~ yday("2021-06-15"),
+                         month == 7 ~ yday("2021-07-15"),
+                         month == 8 ~ yday("2021-08-15"),
+                         month == 9 ~ yday("2021-09-15"),
+                         month == 10 ~ yday("2021-10-15"),
+                         month == 11 ~ yday("2021-11-15")
+                         ))
+
+dosum_month_exclude <- dosum_month %>%
+  filter(site %notin% exclude)
+
+# summarize daily DO data by fish life history season
+dosum_season <- dodata %>%
+    group_by(site, yearf, season, day, dayf) %>%
+  summarise(min_do = min(do, na.rm = T),
+            max_do = max(do, na.rm = T),
+            mean_do = mean(do, na.rm = T),
+            .groups = "drop")  %>%
+  group_by(site, yearf, season) %>%
+  summarize(mean_mean = mean(mean_do),
+            mean_max = mean(max_do),
+            mean_min = mean(min_do),
+            n = length(mean_do),
+            .groups = "drop") %>%
+  mutate(order = case_when(season == "migrate" ~ 1,
+                           season == "spawn" ~ 2,
+                           season == "larvae" ~ 3,
+                           season == "juvenile" ~ 4,
+                           season == "fall_mig" ~ 5),
+         season2 = case_when(season == "migrate" ~ "Migrate (S)",
+                           season == "spawn" ~ "Spawn",
+                           season == "larvae" ~ "Larvae",
+                           season == "juvenile" ~ "Juvenile",
+                           season == "fall_mig" ~ "Migrate (F)"),
+         season2 = fct_reorder(season2, order))
+
+dosum_season_exclude <- dosum_season %>%
+    filter(site %notin% exclude)
+
+rm(p)
+```
+# 2.1. Plot A: Daily mean temperature with monthly averages by year (separate plots by site)
+```{r}
+sites <- unique(tdata$site)
+
+for(i in sites){
+print(i)
+tsum %>%
+  filter(site == i) %>%
+  ggplot() +
+  geom_errorbar(aes(x = day, ymin = min_temp, ymax = max_temp),
+                width = 0, linewidth = .3, color = "firebrick",
+                alpha = 0.4) +  
+  geom_point(aes(x = day, y = mean_temp), size = .5,
+             color = "firebrick", shape = 18, alpha = 1) +
+  geom_errorbar(aes(x = mid, ymin = mean_min, ymax = mean_max),
+                width = 0, linewidth = .5, color = "black",
+                data = filter(tsum_month, site == i)) +  
+  geom_point(aes(x = mid, y = mean_mean), size = 2,
+             color = "black", shape = 16,
+             data = filter(tsum_month, site == i)) +
+  facet_wrap(~yearf) +
+  theme_minimal() +
+  labs(x = "", y = "Daily & monthly temperatures",
+       title = i) +
+  theme(text = element_text(size = 14),
+        axis.title.y = element_text(size = 12)) +
+  scale_y_continuous(breaks = seq(0,30, by = 10),
+                     limits = c(0,32)) +
+    scale_x_continuous(
+    breaks = c(91, 152, 213, 274, 335),
+    limits = c(82, 339),
+    labels = c("Apr", "Jun", "Aug",
+               "Oct", "Dec")
+  )
+
+ggsave(paste0("output/Task2_WQ_migratory_species/PlotA/PlotA_",i,"_daily_monthly_temps.png"), height = 5, width = 8, dpi = 400)
+}
+
+```
+# 2.2. Plot B: monthy mean temperatures by year (separate plots for each site)
+```{r}
+# make list of sites to plot
+sites <- unique(tdata$site)
+
+# format data for min/max ribbon
+tsum_envelope <- tdata %>%
+  group_by(site, day) %>%
+  summarize(multi_min = min(temp),
+            multi_max = max(temp),
+            .groups = "drop")
+
+# make plots
+for( i in sites ) {
+print(i)
+tsum_month %>%
+  filter(site == i) %>%
+  ggplot() +
+  geom_ribbon(aes(x = day, ymax = multi_max,
+                  ymin = multi_min), 
+              data = filter(tsum_envelope, site == i),
+              fill = "gray", alpha = 0.5) +
+  geom_line(aes(x = mid, y = mean_mean, color = yearf), linewidth = .5,
+             shape = 16,
+             position = position_dodge(width = 10)) +      
+  geom_point(aes(x = mid, y = mean_mean, color = yearf), size = 2,
+             shape = 16,
+             position = position_dodge(width = 10)) +
+  theme_minimal() +
+  labs(x = "", y = "Mean monthly temperature",
+       title = i, color = "") +
+  theme(text = element_text(size = 14),
+        axis.title.y = element_text(size = 12)) +
+    scale_y_continuous(breaks = seq(0,30, by = 10),
+                     limits = c(0,32)) +
+    scale_x_continuous(
+    breaks = c(91, 152, 213, 274, 335),
+    limits = c(82, 339),
+    labels = c("Apr", "Jun", "Aug",
+               "Oct", "Dec")
+  ) +
+  scale_color_manual(values = c(wes_palettes$Royal1,
+                                wes_palettes$Royal2))
+
+ggsave(paste0("output/Task2_WQ_migratory_species/PlotB/PlotB_",i,"_monthly_temps.png"), height = 5, width = 7, dpi = 400)
+}
+```
+# 2.3. Plot C: Daily mean DO with monthly averages by year (separate plots by site)
+```{r}
+# make list of sites
+sites <- unique(dodata$site)
+
+# make plot for each site
+for(i in sites){
+# x11(8,5); 
+print(i)
+dosum %>%
+  filter(site == i) %>%
+  ggplot() +
+  geom_errorbar(aes(x = day, ymin = min_do, ymax = max_do),
+                width = 0, linewidth = .3, color = "dodgerblue",
+                alpha = 0.4) +  
+  geom_point(aes(x = day, y = mean_do), size = .5,
+             color = "dodgerblue", shape = 18, alpha = 1) +
+  geom_errorbar(aes(x = mid, ymin = mean_min, ymax = mean_max),
+                width = 0, linewidth = .5, color = "black",
+                data = filter(dosum_month, site == i)) +  
+  geom_point(aes(x = mid, y = mean_mean), size = 2,
+             color = "black", shape = 16,
+             data = filter(dosum_month, site == i)) +
+  facet_wrap(~yearf) +
+  theme_minimal() +
+  labs(x = "", y = "Daily & monthly dissolved oxygen",
+       title = i) +
+  theme(text = element_text(size = 14),
+        axis.title.y = element_text(size = 12)) +
+  scale_y_continuous(breaks = seq(0,16, by = 4),
+                     limits = c(0,16.5)) +
+    scale_x_continuous(
+    breaks = c(91, 152, 213, 274, 335),
+    limits = c(82, 339),
+    labels = c("Apr", "Jun", "Aug",
+               "Oct", "Dec")
+  )
+
+ggsave(paste0("output/Task2_WQ_migratory_species/PlotC/PlotC_",i,"_daily_monthly_DO.png"), height = 5, width = 8, dpi = 400)
+
+}
+```
+# 2.4. Plot D: Daily mean DO with monthly averages by year (separate plots by site)
+```{r}
+# make a list of the sites
+sites <- unique(tdata$site)
+
+# format data for min/max ribbon
+dosum_envelope <- dodata %>%
+  group_by(site, day) %>%
+  summarize(multi_min = min(do),
+            multi_max = max(do),
+            .groups = "drop") 
+
+# make a plot for each site
+for( i in sites) {
+print(i)
+
+# format monthly data for plotting
+plotdata <- dosum_month %>%
+  filter(site == i,
+         n >= 10) %>%
+  select(yearf, mid, mean_mean)
+
+# fill in NA values to allow gaps within time series
+plotdata2 <- plotdata %>%
+  right_join(expand.grid(yearf = unique(plotdata$yearf),
+                         mid = unique(dosum_month$mid)), 
+             by = c("yearf", "mid"))
+  
+  
+ggplot(plotdata2) +
+  geom_ribbon(aes(x = day, ymax = multi_max,
+                  ymin = multi_min), 
+              data = filter(dosum_envelope, site == i),
+              fill = "gray", alpha = 0.5) +
+  geom_line(aes(x = mid, y = mean_mean, color = yearf), linewidth = .5,
+             position = position_dodge(width = 10)) +      
+  geom_point(aes(x = mid, y = mean_mean, color = yearf), size = 2,
+             shape = 16,
+             position = position_dodge(width = 10)) +
+  theme_minimal() +
+  labs(x = "", y = "Mean monthly dissolved oxygen",
+       title = i, color = "") +
+  theme(text = element_text(size = 14),
+        axis.title.y = element_text(size = 12)) +
+    scale_y_continuous(breaks = seq(0,16, by = 4),
+                     limits = c(0,16.5)) +
+    scale_x_continuous(
+    breaks = c(91, 152, 213, 274, 335),
+    limits = c(82, 339),
+    labels = c("Apr", "Jun", "Aug",
+               "Oct", "Dec")
+    ) +
+  scale_color_manual(values = c(wes_palettes$Royal1,
+                                wes_palettes$Royal2))
+
+ggsave(paste0("output/Task2_WQ_migratory_species/PlotD/PlotD_",i,"_monthly_DO.png"), height = 5, width = 7, dpi = 400)
+
+rm(plotdata, plotdata2)
+}
+```
+# 2.5. Plot E: mean/min/max temperature during migratory fish periods
+Only include sites accessible by migratory fish.
+```{r}
+# Create list of sites (excluding those not accessible)
+sites <- unique(tdata$site)
+sites <- sites[sites %notin% exclude]
+
+# get the year before the overall max year for the study
+# this is needed to properly set up the year factor for plotting
+max_y_b4 <- max(tdata$year) - 1
+
+# make a plot for each site
+for(i in sites){
+  print(i)
+
+# set up colors
+color_vector_df <- data.frame(order = 1:10,
+                              col = c(wes_palettes$Zissou1, 
+                                      wes_palettes$Royal2))
+
+# subset the data for the plot
+plot_data <- tsum_season_exclude %>%
+  filter(site == i,
+         is.na(season)==F,
+         n > 10) %>%
+  left_join(color_vector_df, by = "order")
+
+# get the max year of the data for that site
+max_y <- max(as.numeric(as.character(plot_data$yearf)))
+
+# make a (repeating) vector of seasons to add to annotate df
+#   (repeating makes it flexible to accomodate future years)
+seas2_vector <- 
+  rep(c("Migrate (S)", "Spawn", "Larvae", "Juvenile","Migrate (F)"),
+      4)
+
+# same for annotations
+ann_vector <- rep(c("Migration (15 April - 15 May)",
+              "Spawning (16-31 May)\nOptimal egg dev.: 17 C",
+              "Larvae (1-30 June)\nRequire: 16-26 C",
+              "Juvenile (1 July - 15 Sept.)\nRequire: 16-26 C",
+              "Migration (16 Sept. - 30 Nov.)"),4)
+              
+# make vector of years for annotation plot and count them
+year_vector <- c(rep(max_y,5),2016:max_y_b4)
+yv_len <- length(year_vector)
+
+# create a dataframe to map the text annotations
+annotate_df <- data.frame(yearf = as.factor(year_vector),
+                          mean_mean = 6,
+                          season2 = as.factor(seas2_vector[1:yv_len]),
+      ann = ann_vector[1:yv_len]
+      ) %>%
+  filter(yearf == max_y) %>%
+    mutate(order = case_when(season2 == "Migrate (S)" ~ 1,
+                           season2 == "Spawn" ~ 2,
+                           season2 == "Larvae" ~ 3,
+                           season2 == "Juvenile" ~ 4,
+                           season2 == "Migrate (F)" ~ 5),
+         season2 = fct_reorder(season2, order)) %>%
+  left_join(color_vector_df, by = "order")
+
+# all of that was required to make sure all elements of factors
+#   year and season2 appear in the plot where appropriate,
+#     and in the right order
+
+# make the plot
+ggplot(plot_data) +
+  geom_errorbar(aes(y = yearf, 
+                    xmin = mean_min, xmax = mean_max),
+                width = 0) +
+  geom_point(aes(y = yearf, x = mean_mean, color = season2),
+             size = 3, color = plot_data$col) +
+  geom_text(aes(y = yearf, x = mean_mean, color = season2, 
+                label = ann), data = annotate_df, size = 3,
+            hjust = .05, vjust = .8, color = annotate_df$col) +
+  facet_grid(season2~.) +
+    theme_bw() +
+  labs(x = "Mean daily temperature\n(+/- average min and max)", y = "",
+       title = i, color = "") +
+  scale_x_continuous(limits = c(6,27),
+                     breaks = seq(6,26, by = 4)) +
+  theme(text = element_text(size = 14),
+        axis.title.y = element_text(size = 12),
+        axis.text.y = element_text(size = 10),
+        strip.text = element_blank(),
+        strip.background = element_blank(),
+        legend.position = "right") +
+  guides(color = "none")
+
+ggsave(paste0("output/Task2_WQ_migratory_species/PlotE/PlotE_",i,"_fish_seasons_temp.png"), height = 5, width = 6, dpi = 400)
+}
+
+rm(plot_data, annotate_df, max_y, color_vector_df, ann_vector,
+   max_y_b4, seas2_vector, year_vector, yv_len)
+```
+# 2.6. Plot F: mean/min/max DO during migratory fish periods
+Only include sites accessible by migratory fish.
+```{r}
+# Create list of sites (excluding those not accessible)
+sites <- unique(dodata$site)
+sites <- sites[sites %notin% exclude]
+
+# get the year before the overall max year for the study
+# this is needed to properly set up the year factor for plotting
+max_y_b4 <- max(tdata$year) - 1
+
+# make a plot for each site
+for(i in sites){
+  print(i)
+# set up colors
+color_vector_df <- data.frame(order = 1:10,
+                              col = c(wes_palettes$Zissou1, 
+                                      wes_palettes$Royal2))
+
+# subset the data for the plot
+plot_data <- dosum_season_exclude %>%
+  filter(site == i,
+         is.na(season)==F,
+         n > 10) %>%
+  left_join(color_vector_df, by = "order")
+
+# get the max year of the data for that site
+max_y <- max(as.numeric(as.character(plot_data$yearf)))
+
+# make a (repeating) vector of seasons to add to annotate df
+#   (repeating makes it flexible to accomodate future years)
+seas2_vector <- 
+  rep(c("Migrate (S)", "Spawn", "Larvae", "Juvenile","Migrate (F)"),
+      4)
+
+# same for annotations
+ann_vector <- rep(c("Migration (15 April - 15 May)",
+              "Spawning (16-31 May)\nRequire: > 5 mg/L",
+              "Larvae (1-30 June)\nRequire: > 5 mg/L",
+              "Juvenile (1 July - 15 Sept.)\nRequire: > 5 mg/L",
+              "Migration (16 Sept. - 30 Nov.)"),4)
+              
+# make vector of years for annotation plot and count them
+year_vector <- c(rep(max_y,5),2016:max_y_b4)
+yv_len <- length(year_vector)
+
+# create a dataframe to map the text annotations
+annotate_df <- data.frame(yearf = as.factor(year_vector),
+                          mean_mean = 0,
+                          season2 = as.factor(seas2_vector[1:yv_len]),
+      ann = ann_vector[1:yv_len]
+      ) %>%
+  filter(yearf == max_y) %>%
+    mutate(order = case_when(season2 == "Migrate (S)" ~ 1,
+                           season2 == "Spawn" ~ 2,
+                           season2 == "Larvae" ~ 3,
+                           season2 == "Juvenile" ~ 4,
+                           season2 == "Migrate (F)" ~ 5),
+         season2 = fct_reorder(season2, order)) %>%
+  left_join(color_vector_df, by = "order")
+
+# all of that was required to make sure all elements of factors
+#   year and season2 appear in the plot where appropriate,
+#     and in the right order
+
+# make the plot
+ggplot(plot_data) +
+    geom_errorbar(aes(y = yearf, 
+                    xmin = mean_min, xmax = mean_max),
+                width = 0) +
+  geom_point(aes(y = yearf, x = mean_mean, color = season2),
+             size = 3, color = plot_data$col) +
+  geom_text(aes(y = yearf, x = mean_mean, color = season2, 
+                label = ann), data = annotate_df, size = 3,
+            hjust = .05, vjust = .8, color = annotate_df$col) +
+  facet_grid(season2~.) +
+    theme_bw() +
+  labs(x = "Mean daily dissolved oxygen\n(+/- average min and max)", 
+       y = "",
+       title = i, color = "") +
+    scale_x_continuous(limits = c(0,14),
+                     breaks = seq(0,14, by = 2)) +
+  theme(text = element_text(size = 14),
+        axis.title.y = element_text(size = 12),
+        axis.text.y = element_text(size = 10),
+        strip.text = element_blank(),
+        strip.background = element_blank(),
+        legend.position = "right") +
+  guides(color = "none")
+
+ggsave(paste0("output/Task2_WQ_migratory_species/PlotF/PlotF_",i,"_fish_seasons_DO.png"), height = 5, width = 6, dpi = 400)
+}
+
+rm(plot_data, annotate_df, max_y)
+```
+# 2.7. Table A: average daily temperatures by month
+```{r}
+sites <- unique(tdata$site)
+
+for(i in sites){
+  print(i)
+(tmonth_table <- tsum_month %>%
+  filter(n >= 10,
+         site == i) %>%
+  rename(Year = yearf,
+         Site = site,
+         Mean = mean_mean,
+         Max = mean_max,
+         Min = mean_min) %>%
+  arrange(Site, month, Year) %>%
+  select(Site, Month, Year, Min, Mean, Max, n)  %>%
+  kbl(caption = 
+        paste0("Average daily temperatures (min, mean, and max) by month for site ", i,"."), 
+      digits = 1) %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+)
+
+# save the table to HTML file
+save_kable(tmonth_table,
+           paste0("output/",
+                  "Task2_WQ_migratory_species/TableA/",
+                  "TableA_", i, 
+                  "_monthly_average_temperatures.html"))
+}
+
+```
+# 2.8. Table B: average daily temperatures for 1 Jul - 15 Sept
+```{r}
+# Make a list of sites
+sites <- unique(tdata$site)
+
+# Make a table for each site
+for(i in sites){
+  print(i)
+(t_hotseason_table <- tsum_season %>%
+  filter(n >= 10,
+         season == "juvenile",
+         site == i) %>%
+  rename(Year = yearf,
+         Site = site,
+         Mean = mean_mean,
+         'Avg. Max' = mean_max,
+         'Avg. Min' = mean_min,
+         'Abs. Min' = min_min,
+         'Abs. Max' = max_max) %>%
+    mutate(Period = "1 Jul - 15 Sep") %>%
+  arrange(Site, Year) %>%
+  select(Site, Year, Period, 'Abs. Min', 'Avg. Min', 
+         Mean, 'Avg. Max', 'Abs. Max',  n)  %>%
+  kbl(caption = 
+        paste0("Average daily temperatures (min, mean, and max) during the period 1 July to 15 September for site ", i,"."), 
+      digits = 1) %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+)
+
+# save the table to HTML file
+save_kable(t_hotseason_table,
+           paste0("output/",
+                  "Task2_WQ_migratory_species/TableB/",
+                  "TableB_", i, 
+                  "_average_temps_1Jul_15Sep.html"))
+}
+```
+# 2.9. Table C: average daily temperatures for migratory fish seasons
+```{r}
+# Create list of sites (excluding those not accessible)
+sites <- unique(tdata$site)
+sites <- sites[sites %notin% exclude]
+
+# Make a table for each site
+for(i in sites){
+  print(i)
+(t_fishseason_table <- tsum_season_exclude %>%
+  filter(n >= 10,
+         site == i,
+         is.na(season) == F) %>%
+  rename(Year = yearf,
+         Season = season2,
+         Site = site,
+         Mean = mean_mean,
+         'Avg. Max' = mean_max,
+         'Avg. Min' = mean_min,
+         'Abs. Min' = min_min,
+         'Abs. Max' = max_max) %>%
+  arrange(Site, Season, Year) %>%
+  select(Site, Season, Year, 'Abs. Min', 'Avg. Min', 
+         Mean, 'Avg. Max', 'Abs. Max',  n)  %>%
+  kbl(caption = 
+        paste0("Average daily temperatures (min, mean, and max) during the primary migratory fish periods for site ", i,". Spring migration: 15 April - 15 May; Spawning: 16-31 May; Larvae: 1-30 June; Juvenile: 1 July - 15 Sept.; Fall migration: 16 Sept. - 30 Nov."), 
+      digits = 1) %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+)
+
+# save the table to HTML file
+save_kable(t_fishseason_table,
+           paste0("output/",
+                  "Task2_WQ_migratory_species/TableC/",
+                  "TableC_", i, 
+                  "_average_temps_mig_fish_seasons2.html"))
+}
+
+```
+# 2.10. Models A-E: Modeling mean temperature by site in each season
+Output is saved in the Model A-E text files in the statistical analysis section. In these models, the mean temperature by site (a fixed effect) is estimated using linear mixed effect models with intercepts varying among years and among days within years (nested random effects).
+```{r}
+# Model A: fit mean temperature by site model during spring migration 
+tdata_migrate <- filter(tdata, is.na(temp)==F,
+                           season == "migrate",
+                        site %notin% exclude)
+saveRDS(tdata_migrate, "output/Task2_WQ_migratory_species/statistical_analysis/ModelA_tdata_migrate.rds")
+
+temp_mod_migrate <- lmer(temp ~ site + (1 | yearf/dayf), 
+             data = tdata_migrate)
+summary(temp_mod_migrate)
+saveRDS(temp_mod_migrate,
+        "output/Task2_WQ_migratory_species/statistical_analysis/ModelA_temp_mod_migrate.rds")
+
+# Model B: fit mean temperature by site model during spawning period
+tdata_spawn <- filter(tdata, is.na(temp)==F,
+                           season == "spawn",
+                        site %notin% exclude)
+
+saveRDS(tdata_spawn, "output/Task2_WQ_migratory_species/statistical_analysis/ModelB_tdata_spawn.rds")
+
+temp_mod_spawn <- 
+  lmer(temp ~ site + (1 | yearf/dayf), 
+             data = tdata_spawn)
+summary(temp_mod_spawn)
+
+saveRDS(temp_mod_spawn,
+        "output/Task2_WQ_migratory_species/statistical_analysis/ModelB_temp_mod_spawn.rds")
+
+# Model C: fit mean temperature by site model during larval period
+tdata_lar <- filter(tdata, is.na(temp)==F,
+                           season == "larvae",
+                        site %notin% exclude)
+
+saveRDS(tdata_lar, "output/Task2_WQ_migratory_species/statistical_analysis/ModelC_tdata_lar.rds")
+
+temp_mod_lar <- 
+  lmer(temp ~ site + (1 | yearf/dayf), 
+             data = tdata_lar)
+summary(temp_mod_lar)
+
+saveRDS(temp_mod_lar,
+        "output/Task2_WQ_migratory_species/statistical_analysis/ModelC_temp_mod_lar.rds")
+
+# Model D: fit mean temperature by site model during juvenile period
+tdata_juv <- filter(tdata, is.na(temp)==F,
+                           season == "juvenile",
+                        site %notin% exclude)
+
+saveRDS(tdata_juv, "output/Task2_WQ_migratory_species/statistical_analysis/ModelD_tdata_juv.rds")
+
+temp_mod_juv <- 
+  lmer(temp ~ site + (1 | yearf/dayf), 
+             data = tdata_juv)
+summary(temp_mod_juv)
+
+saveRDS(temp_mod_juv,
+        "output/Task2_WQ_migratory_species/statistical_analysis/ModelD_temp_mod_juv.rds")
+
+# Model E: fit mean temperature by site model during fall migration period
+tdata_fall <- filter(tdata, is.na(temp)==F,
+                           season == "fall_mig",
+                        site %notin% exclude)
+
+saveRDS(tdata_fall, "output/Task2_WQ_migratory_species/statistical_analysis/ModelE_tdata_fall.rds")
+
+temp_mod_fall <- 
+  lmer(temp ~ site + (1 | yearf/dayf), 
+             data = tdata_fall)
+summary(temp_mod_fall)
+
+saveRDS(temp_mod_fall,
+        "output/Task2_WQ_migratory_species/statistical_analysis/ModelE_temp_mod_fall.rds")
+
+rm(tdata_migrate, tdata_spawn, tdata_lar, tdata_juv, tdata_fall)
+```
+# 2.11. Generate bootstrapped CI's for modeled mean temperature by site estimates (from Models A-E)
+This generates 95% confidence intervals for the modeled mean temperature values in Models A-E. 
+Note: you will need to run the previous code chunk in order for this to work.
+Warning: very long run time (& juv run uses lots of RAM). All outputs from models and bootstrapping were saved as .rds files in the "statistical_analysis" subfolder. So if you do not need to rerun them, you can skip to section 2.12 (Plot G) and it will still work.
+```{r}
+# First load all model output and data objects
+statpath <- "output/Task2_WQ_migratory_species/statistical_analysis/"
+
+tdata_migrate <- readRDS(here(statpath, "ModelA_tdata_migrate.rds"))
+temp_mod_migrate <- readRDS(here(statpath, 
+                                 "ModelA_temp_mod_migrate.rds"))
+tdata_spawn <- readRDS(here(statpath, "ModelB_tdata_spawn.rds"))
+temp_mod_spawn <- readRDS(here(statpath, 
+                                 "ModelB_temp_mod_spawn.rds"))
+tdata_lar <- readRDS(here(statpath, "ModelC_tdata_lar.rds"))
+temp_mod_lar <- readRDS(here(statpath, 
+                                 "ModelC_temp_mod_lar.rds"))
+tdata_juv <- readRDS(here(statpath, "ModelD_tdata_juv.rds"))
+temp_mod_juv <- readRDS(here(statpath, 
+                                 "ModelD_temp_mod_juv.rds"))
+tdata_fall <- readRDS(here(statpath, "ModelE_tdata_fall.rds"))
+temp_mod_fall <- readRDS(here(statpath, 
+                                 "ModelE_temp_mod_fall.rds"))
+
+# Next make covariate dataframes for prediction
+
+# make prediction covariate data for migration
+newdat_migrate <- expand.grid(site = unique(tdata$site)) %>%
+  filter(site %in% tdata_migrate$site) %>%
+  droplevels()
+
+# make prediction covariate data for spawning
+newdat_spawn <- expand.grid(site = unique(tdata$site)) %>%
+  filter(site %in% tdata_spawn$site) %>%
+  droplevels()
+
+# make prediction covariate data for larvae
+newdat_lar <- expand.grid(site = unique(tdata$site)) %>%
+  filter(site %in% tdata_lar$site) %>%
+  droplevels()
+
+# make prediction covariate data for juvenile
+newdat_juv <- expand.grid(site = unique(tdata$site)) %>%
+  filter(site %in% tdata_juv$site) %>%
+  droplevels()
+
+# make prediction covariate data for fall migration
+newdat_fall <- expand.grid(site = unique(tdata$site)) %>%
+  filter(site %in% tdata_fall$site) %>%
+  droplevels()
+
+# Next generate and save bootstrapped CIs (this can take a while)
+
+# Bootstrapped CIs for predicted mean temperature - spring migration
+pred_fun_migrate <- function(.) {
+  c(predict(., data.frame(site = unique(newdat_migrate$site)), 
+            re.form = NA))
+}
+
+bootCI_migrate = bootMer(temp_mod_migrate, pred_fun_migrate, 
+                 re.form=NA, nsim = 1000,
+                 verbose = T)
+
+saveRDS(bootCI_migrate, "output/Task2_WQ_migratory_species/statistical_analysis/temp_mod_migrate_bootstraps.rds")
+
+# Bootstrapped CIs for predicted mean temperature - Spawning
+pred_fun_spawn <- function(.) {
+  c(predict(., data.frame(site = unique(newdat_spawn$site)), 
+            re.form = NA))
+}
+
+bootCI_spawn = bootMer(temp_mod_spawn, pred_fun_spawn, 
+                 re.form=NA, nsim = 1000,
+                 verbose = T)
+
+saveRDS(bootCI_spawn, "output/Task2_WQ_migratory_species/statistical_analysis/temp_mod_spawn_bootstraps.rds")
+
+# Bootstrapped CIs for predicted mean temperature - Larvae
+pred_fun_lar <- function(.) {
+  c(predict(., data.frame(site = unique(newdat_lar$site)), 
+            re.form = NA))
+}
+
+bootCI_lar = bootMer(temp_mod_lar, pred_fun_lar, 
+                 re.form=NA, nsim = 1000,
+                 verbose = T)
+
+saveRDS(bootCI_lar, "output/Task2_WQ_migratory_species/statistical_analysis/temp_mod_lar_bootstraps.rds")
+
+# Bootstrapped CIs for predicted mean temperature - Juvenile
+pred_fun_juv <- function(.) {
+  c(predict(., data.frame(site = unique(newdat_juv$site)), 
+            re.form = NA))
+}
+
+bootCI_juv = bootMer(temp_mod_juv, pred_fun_juv, 
+                 re.form=NA, nsim = 1000,
+                 verbose = T)
+
+saveRDS(bootCI_juv, "output/Task2_WQ_migratory_species/statistical_analysis/temp_mod_juv_bootstraps.rds")
+
+# Bootstrapped CIs for predicted mean temperature - Fall migration
+pred_fun_fall <- function(.) {
+  c(predict(., data.frame(site = unique(newdat_fall$site)), 
+            re.form = NA))
+}
+
+bootCI_fall = bootMer(temp_mod_fall, pred_fun_fall, 
+                 re.form=NA, nsim = 1000,
+                 verbose = T)
+
+saveRDS(bootCI_fall, "output/Task2_WQ_migratory_species/statistical_analysis/temp_mod_fall_bootstraps.rds")
+```
+# 2.12. Plot G: modeled mean temp by fish stage w/ CIs
+This plots the results from all 5 models of mean temperature by site run above (Models A-E). For it to work, first we load the data, model output, and bootstrapped confidence interval data from those model runs. Those objects were created and saved in one of the code sections above.
+```{r}
+# First load all model output and data objects
+statpath <- "output/Task2_WQ_migratory_species/statistical_analysis/"
+
+tdata_migrate <- readRDS(here(statpath, "ModelA_tdata_migrate.rds"))
+temp_mod_migrate <- readRDS(here(statpath, 
+                                 "ModelA_temp_mod_migrate.rds"))
+tdata_spawn <- readRDS(here(statpath, "ModelB_tdata_spawn.rds"))
+temp_mod_spawn <- readRDS(here(statpath, 
+                                 "ModelB_temp_mod_spawn.rds"))
+tdata_lar <- readRDS(here(statpath, "ModelC_tdata_lar.rds"))
+temp_mod_lar <- readRDS(here(statpath, 
+                                 "ModelC_temp_mod_lar.rds"))
+tdata_juv <- readRDS(here(statpath, "ModelD_tdata_juv.rds"))
+temp_mod_juv <- readRDS(here(statpath, 
+                                 "ModelD_temp_mod_juv.rds"))
+tdata_fall <- readRDS(here(statpath, "ModelE_tdata_fall.rds"))
+temp_mod_fall <- readRDS(here(statpath, 
+                                 "ModelE_temp_mod_fall.rds"))
+
+# Next make covariate dataframes for prediction
+
+# make prediction covariate data for migration
+newdat_migrate <- expand.grid(site = unique(tdata$site)) %>%
+  filter(site %in% tdata_migrate$site) %>%
+  droplevels()
+
+# make prediction covariate data for spawning
+newdat_spawn <- expand.grid(site = unique(tdata$site)) %>%
+  filter(site %in% tdata_spawn$site) %>%
+  droplevels()
+
+# make prediction covariate data for larvae
+newdat_lar <- expand.grid(site = unique(tdata$site)) %>%
+  filter(site %in% tdata_lar$site) %>%
+  droplevels()
+
+# make prediction covariate data for juvenile
+newdat_juv <- expand.grid(site = unique(tdata$site)) %>%
+  filter(site %in% tdata_juv$site) %>%
+  droplevels()
+
+# make prediction covariate data for fall migration
+newdat_fall <- expand.grid(site = unique(tdata$site)) %>%
+  filter(site %in% tdata_fall$site) %>%
+  droplevels()
+
+# Next load the bootstrapped CI data
+
+bootCI_migrate <- readRDS("output/Task2_WQ_migratory_species/statistical_analysis/temp_mod_migrate_bootstraps.rds")
+
+bootCI_spawn <- readRDS("output/Task2_WQ_migratory_species/statistical_analysis/temp_mod_spawn_bootstraps.rds")
+
+bootCI_lar <- readRDS("output/Task2_WQ_migratory_species/statistical_analysis/temp_mod_lar_bootstraps.rds")
+
+bootCI_juv <- readRDS("output/Task2_WQ_migratory_species/statistical_analysis/temp_mod_juv_bootstraps.rds")
+
+bootCI_fall <- readRDS("output/Task2_WQ_migratory_species/statistical_analysis/temp_mod_fall_bootstraps.rds")
+
+# Next make a function to compile modeled means and 95% CIs
+
+boot_compile <- function(boot, mod, newdat, label){
+  
+tplot_df <- apply(boot$t, 2, 
+               function(x) quantile(x, c(0.025,0.975))) %>% 
+  t() %>%
+  as.data.frame() %>%
+  mutate(site = unique(boot$data$site)) %>%
+  filter(site %in% unique(newdat$site))%>%
+  mutate(fit = predict(mod, 
+                    data.frame(site = unique(newdat$site)), 
+                    re.form = NA)) %>%
+  rename(q2.5 = 1, q97.5 = 2) %>%
+  select(site, fit, q2.5, q97.5) %>%
+  mutate(site = fct_reorder(site, fit),
+         per = label)
+
+return(tplot_df)
+
+}
+
+tplots <- rbind.data.frame(
+  boot_compile(bootCI_juv, temp_mod_juv, 
+               newdat_juv, "Juvenile"),  
+  boot_compile(bootCI_migrate, temp_mod_migrate, 
+               newdat_migrate, "Spring Migration"),
+  boot_compile(bootCI_spawn, temp_mod_spawn, 
+               newdat_spawn, "Spawning"),
+  boot_compile(bootCI_lar, temp_mod_lar, 
+               newdat_lar, "Larvae"),
+  boot_compile(bootCI_fall, temp_mod_fall, 
+               newdat_fall, "Fall Migration")
+) %>%
+  mutate(per = fct_rev(per))
+
+tplots %>%
+  filter(site %notin% exclude) %>%
+  ggplot() +
+  geom_point(aes(y = site, x = fit,
+                 ),
+             size = 1) +
+  geom_errorbar(aes(y = site, xmin = q2.5, 
+                    xmax = q97.5),
+                width = 0) +
+  facet_wrap(~ per, ncol = 5) +
+  theme_bw() +
+  labs(y = "", x = "Mean temperature (C; +/- 95% CI)") +
+  theme(strip.background = element_rect(fill = "white"))
+                      
+ggsave("output/Task2_WQ_migratory_species/PlotG_modeled_mean_temp_by_fish_stage.png", width = 6, height = 4, dpi = 400)
+```
+# 2.13. Models F-J: Modeling year trend in mean temperature within each season
+Linear mixed effect models estimating the linear slope of year.
+Note: Initially, a range of models were attempted with 1) correlated random slope & intercept of year by site, 2) uncorrelated random slope and intercept, and 3) just a random intercept. The correlated slope & intercept fit best for all seasons and are the only models shown below. Some models required manually setting initial values to get them to converge.
+```{r}
+# set folder to save model output
+statpath <- "output/Task2_WQ_migratory_species/statistical_analysis/"
+
+# Make year data into integer (1-N)
+tdata$yearn <- tdata$year - 2015
+
+# fit model during migration period
+temp_trend_migrate <- lmerTest::lmer(temp ~ yearn + 
+                                       (1 | dayf) + 
+                                        (yearn | site), 
+             data = filter(tdata, is.na(temp)==F,
+                           season == "migrate",
+                           # excludes sites not accessible by fish
+                           site %notin% exclude,
+                           # excludes 2 sites in Delaware River
+                           site %notin% c("TNC_26", "TNC_27")))
+summary(temp_trend_migrate)
+ss <- getME(temp_trend_migrate,c("theta","fixef"))
+# set initial values and update to get model to converge...
+# code from: https://rstudio-pubs-static.s3.amazonaws.com/33653_57fc7b8e5d484c909b615d8633c01d51.html
+temp_trend_migrate2 <- update(temp_trend_migrate,
+             start=ss,
+             control=lmerControl(optimizer="bobyqa",
+                            optCtrl=list(maxfun=2e5)))
+summary(temp_trend_migrate2)
+temp_trend_migrate <- temp_trend_migrate2
+saveRDS(temp_trend_migrate, here(statpath, 
+                                 "ModelF_temp_trend_migrate.rds"))
+
+# fit model during spawning period
+temp_trend_spawn <- 
+  lmerTest::lmer(temp ~ yearn + (1 | dayf) +
+                   (yearn | site), 
+             data = filter(tdata, is.na(temp)==F,
+                           season == "spawn",
+                           site %notin% exclude,
+                           # excludes 2 sites in Delaware River
+                           site %notin% c("TNC_26", "TNC_27")))
+summary(temp_trend_spawn)
+ss <- getME(temp_trend_spawn,c("theta","fixef"))
+# set initial values and update to get model to converge...
+# code from: https://rstudio-pubs-static.s3.amazonaws.com/33653_57fc7b8e5d484c909b615d8633c01d51.html
+temp_trend_spawn2 <- update(temp_trend_spawn,
+             start=ss,
+             control=lmerControl(optimizer="bobyqa",
+                            optCtrl=list(maxfun=2e5)))
+summary(temp_trend_spawn2)
+temp_trend_spawn <- temp_trend_spawn2
+saveRDS(temp_trend_spawn, here(statpath, 
+                                 "ModelG_temp_trend_spawn.rds"))
+
+# fit model during larval period
+temp_trend_lar <- 
+  lmerTest::lmer(temp ~ yearn + (1 | dayf) + (yearn | site), 
+             data = filter(tdata, is.na(temp)==F,
+                           season == "larvae",
+                           site %notin% exclude,
+                           # excludes 2 sites in Delaware River
+                           site %notin% c("TNC_26", "TNC_27")))
+summary(temp_trend_lar)
+ss <- getME(temp_trend_lar,c("theta","fixef"))
+# set initial values and update to get model to converge...
+# code from: https://rstudio-pubs-static.s3.amazonaws.com/33653_57fc7b8e5d484c909b615d8633c01d51.html
+temp_trend_lar2 <- update(temp_trend_lar,
+             start=ss,
+             control=lmerControl(optimizer="bobyqa",
+                            optCtrl=list(maxfun=2e5)))
+summary(temp_trend_lar2)
+temp_trend_lar <- temp_trend_lar2
+saveRDS(temp_trend_lar, here(statpath, 
+                                 "ModelH_temp_trend_lar.rds"))
+
+# fit model during juvenile period
+temp_trend_juv <- 
+  lmerTest::lmer(temp ~ yearn + (1 | dayf) + (yearn | site), 
+             data = filter(tdata, is.na(temp)==F,
+                           season == "juvenile",
+                           site %notin% exclude,
+                           # excludes 2 sites in Delaware River
+                           site %notin% c("TNC_26", "TNC_27")))
+summary(temp_trend_juv)
+# set initial values and update to get model to converge...
+ss <- getME(temp_trend_juv, c("theta","fixef"))
+temp_trend_juv2 <- update(temp_trend_juv,
+             start=ss,
+             control=lmerControl(optimizer="bobyqa",
+                            optCtrl=list(maxfun=2e5)))
+summary(temp_trend_juv2)
+temp_trend_juv <- temp_trend_juv2
+saveRDS(temp_trend_juv, here(statpath, 
+                                 "ModelI_temp_trend_juv.rds"))
+
+# fit model during fall migration period
+temp_trend_fall <- 
+  lmerTest::lmer(temp ~ yearn + (1 | dayf) + (yearn | site), 
+             data = filter(tdata, is.na(temp)==F,
+                           season == "fall_mig",
+                           site %notin% exclude,
+                           # excludes 2 sites in Delaware River
+                           site %notin% c("TNC_26", "TNC_27")))
+summary(temp_trend_fall)
+saveRDS(temp_trend_fall, here(statpath, 
+                                 "ModelJ_temp_trend_fall.rds"))
+
+# the next model is included to illustrate the effect of correcting 
+# or not correcting for "day of season" (it differs from uncorrected
+# because different time periods were measured in fall each year)
+temp_trend_fall_noday <- 
+  lmerTest::lmer(temp ~ yearn + (yearn | site), 
+             data = filter(tdata, is.na(temp)==F,
+                           season == "fall_mig",
+                           site %notin% exclude,
+                           # excludes 2 sites in Delaware River
+                           site %notin% c("TNC_26", "TNC_27")))
+summary(temp_trend_fall_noday)
+saveRDS(temp_trend_fall_noday, here(statpath, 
+                                 "ModelJ2_temp_trend_fall_noday.rds"))
+```
+# 2.14. Plots H-M: plotting temperature trends (linear slope of year) across sites
+```{r}
+# set folder to save model output
+statpath <- "output/Task2_WQ_migratory_species/statistical_analysis/"
+
+# First load all the model objects (from Models F-J)
+temp_trend_migrate <- readRDS(here(statpath, 
+                                 "ModelF_temp_trend_migrate.rds"))
+temp_trend_spawn <- readRDS(here(statpath, 
+                                 "ModelG_temp_trend_spawn.rds"))
+temp_trend_lar <- readRDS(here(statpath, 
+                                 "ModelH_temp_trend_lar.rds"))
+temp_trend_juv <- readRDS(here(statpath, 
+                                 "ModelI_temp_trend_juv.rds"))
+temp_trend_fall <- readRDS(here(statpath, 
+                                 "ModelJ_temp_trend_fall.rds"))
+temp_trend_fall_noday <- readRDS(here(statpath, 
+                                 "ModelJ2_temp_trend_fall_noday.rds"))
+
+# Next make data frames of model predictions for each season
+migrate_temp_trend_df <- 
+  ggpredict(temp_trend_migrate, terms = "yearn")
+spawn_temp_trend_df <- 
+  ggpredict(temp_trend_spawn, terms = "yearn", type = "fixed")
+larvae_temp_trend_df <- 
+  ggpredict(temp_trend_lar, terms = "yearn")
+juv_temp_trend_df <- 
+  ggpredict(temp_trend_juv, terms = "yearn")
+fall_temp_trend_df <- 
+  ggpredict(temp_trend_fall, terms = c("yearn"))
+fall_temp_trend_df_noday <- 
+  ggpredict(temp_trend_fall_noday, terms = c("yearn"))
+
+# get max year for plotting
+maxyr <- max(migrate_temp_trend_df$x, 
+             fall_temp_trend_df$x, 
+             spawn_temp_trend_df$x,
+             larvae_temp_trend_df$x,
+             fall_temp_trend_df$x)
+
+maxyrlab <- maxyr + 2015
+
+# Plot of temperature trends in spring migration
+
+season_pts <- tsum_season %>%
+  group_by(season, yearf) %>% 
+  summarise(mean = mean(mean_mean),
+            sd = sd(mean_mean),
+            n = length(mean_mean),
+            .groups = "drop") %>%
+  mutate(se = sd/sqrt(n),
+            ll = mean-2*se,
+            ul = mean+2*se,
+            yearn = as.numeric(as.character(yearf))-2015)
+
+(migrate_temp_plot <- 
+    ggplot(migrate_temp_trend_df) +
+  geom_line(aes(x, predicted),
+            size = 1.25, color = "dodgerblue") +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), 
+              alpha = .1) +
+  geom_point(aes(x = yearn, y = mean), 
+             data = filter(season_pts, season == "migrate"),
+               size = 2) +
+  geom_errorbar(aes(x = yearn, ymin = mean-2*se, ymax = mean+2*se),
+                width = 0,
+                data = filter(season_pts, season == "migrate")) +
+  theme_bw() +
+  scale_y_continuous(limits = c(10, 25)) +
+    scale_x_continuous(breaks = 1:maxyr,
+                       labels = 2016:maxyrlab) +
+    labs(x = "", 
+         y = "Mean temperature trend (C)",
+         title = "Apr 15 - May 15 (spring migration)") +
+    theme(text = element_text(size = 14)) +
+    annotate(geom = "text", x = 1, y = 10.3, 
+             label = paste0("Trend = ", 
+                            round(fixef(temp_trend_migrate)[2], 2),
+                            " C / yr",
+            "\np-value = ",                   
+            round(summary(temp_trend_migrate)$coefficients[2,5], 3)),
+             hjust = 0, vjust = 0)
+)
+
+ggsave("output/Task2_WQ_migratory_species/PlotH_mean_temperature_trends_spring_mig.png",
+       width = 5, height = 5, dpi = 400)
+
+# Plot of temperature trends in spawning season
+
+(spawn_temp_plot <- 
+    ggplot(spawn_temp_trend_df) +
+  geom_line(aes(x, predicted), size = 1.25, color = "dodgerblue") +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), 
+              alpha = .1) +
+  geom_point(aes(x = yearn, y = mean), 
+             data = filter(season_pts, season == "spawn"),
+               size = 2) +
+  geom_errorbar(aes(x = yearn, ymin = mean-2*se, ymax = mean+2*se),
+                width = 0,
+                data = filter(season_pts, season == "spawn")) +
+  theme_bw() +
+  scale_y_continuous(limits = c(10, 25)) +
+    scale_x_continuous(breaks = 1:maxyr,
+                       labels = 2016:maxyrlab) +
+    labs(x = "", 
+         y = "Mean temperature trend (C)",
+         title = "May 16-31 (spawning)") +
+    theme(text = element_text(size = 14)) +
+    annotate(geom = "text", x = 1, y = 10.3, 
+             label = paste0("Trend = ", 
+                            round(fixef(temp_trend_spawn)[2], 2),
+                            " C / yr",
+            "\np-value = ",                   
+            round(summary(temp_trend_spawn)$coefficients[2,5], 3)),
+             hjust = 0, vjust = 0)
+  )
+
+ggsave("output/Task2_WQ_migratory_species/PlotI_mean_temperature_trends_spawning.png",
+       width = 5, height = 5, dpi = 400)
+
+# Plot of temperature trends in larval season
+(larvae_temp_plot <- 
+    ggplot(larvae_temp_trend_df) +
+  geom_line(aes(x, predicted), size = 1.25, color = "dodgerblue") +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), 
+              alpha = .1) +
+  geom_point(aes(x = yearn, y = mean), 
+             data = filter(season_pts, season == "larvae"),
+               size = 2) +
+  geom_errorbar(aes(x = yearn, ymin = mean-2*se, ymax = mean+2*se),
+                width = 0,
+                data = filter(season_pts, season == "larvae")) +
+  theme_bw() +
+  scale_y_continuous(limits = c(10, 25)) +
+    scale_x_continuous(breaks = 1:maxyr,
+                       labels = 2016:maxyrlab) +
+    labs(x = "", 
+         y = "Mean temperature trend (C)",
+         title = "Jun 1-30 (larvae)") +
+    theme(text = element_text(size = 14)) +
+    annotate(geom = "text", x = 1, y = 10.3, 
+             label = paste0("Trend = ", 
+                            round(fixef(temp_trend_lar)[2], 2),
+                            " C / yr",
+            "\np-value = ",                   
+            round(summary(temp_trend_lar)$coefficients[2,5], 3)),
+             hjust = 0, vjust = 0)
+  )
+
+ggsave("output/Task2_WQ_migratory_species/PlotJ_mean_temperature_trends_larvae.png",
+       width = 5, height = 5, dpi = 400)
+
+(juv_temp_plot <- 
+    ggplot(juv_temp_trend_df) +
+  geom_line(aes(x, predicted), size = 1.25, color = "dodgerblue") +
+  geom_ribbon(aes(x=x,ymin = conf.low, ymax = conf.high), 
+              alpha = .1) +
+  geom_point(aes(x = yearn, y = mean), 
+             data = filter(season_pts, season == "juvenile"),
+               size = 2) +
+  geom_errorbar(aes(x = yearn, ymin = mean-2*se, ymax = mean+2*se),
+                width = 0,
+                data = filter(season_pts, season == "juvenile")) +
+  theme_bw() +
+  scale_y_continuous(limits = c(10, 25)) +
+    scale_x_continuous(breaks = 1:maxyr,
+                       labels = 2016:maxyrlab) +
+    labs(x = "", 
+         y = "Mean temperature trend (C)",
+         title = "Jul 1 - Sep 15 (juvenile)") +
+    theme(text = element_text(size = 14)) +
+    annotate(geom = "text", x = 1, y = 10.3, 
+             label = paste0("Trend = ", 
+                            round(fixef(temp_trend_juv)[2], 2),
+                            " C / yr",
+            "\np-value = ",                   
+            round(summary(temp_trend_juv)$coefficients[2,5], 3)),
+             hjust = 0, vjust = 0)
+  )
+
+ggsave("output/Task2_WQ_migratory_species/PlotK_mean_temperature_trends_juvenile.png",
+       width = 5, height = 5, dpi = 400)
+
+(fall_temp_plot <- 
+    ggplot(fall_temp_trend_df) +
+  geom_line(aes(x, predicted), size = 1.25, color = "dodgerblue") +
+  geom_ribbon(aes(x=x, ymin = conf.low, ymax = conf.high), 
+              alpha = .1) +
+  geom_line(aes(x, predicted), size = 1, color = "dodgerblue",
+            data = fall_temp_trend_df_noday, lty = 2) +
+  geom_point(aes(x = yearn, y = mean), 
+             data = filter(season_pts, season == "fall_mig"),
+               size = 2) +
+  geom_errorbar(aes(x = yearn, ymin = mean-2*se, ymax = mean+2*se),
+                width = 0,
+                data = filter(season_pts, season == "fall_mig")) +
+  theme_bw() +
+  scale_y_continuous(limits = c(10, 25)) +
+    scale_x_continuous(breaks = 1:maxyr,
+                       labels = 2016:maxyrlab) +
+    labs(x = "", 
+         y = "Mean temperature trend (C)",
+         title = "Sep 16 - Nov 30 (fall migration)") +
+    theme(text = element_text(size = 14)) +
+    annotate(geom = "text", x = 1, y = 10.3, 
+             label = paste0("Trend = ", 
+                            round(fixef(temp_trend_fall)[2], 2),
+                            " C / yr",
+            "\np-value = ",                   
+            round(summary(temp_trend_fall)$coefficients[2,5], 3)),
+             hjust = 0, vjust = 0)
+  )
+
+ggsave("output/Task2_WQ_migratory_species/PlotL_mean_temperature_trends_fall.png",
+       width = 5, height = 5, dpi = 400)
+
+gg <- gridExtra::arrangeGrob(migrate_temp_plot, 
+                             spawn_temp_plot,
+                             larvae_temp_plot,
+                             juv_temp_plot,
+                             fall_temp_plot)
+
+ggsave("output/Task2_WQ_migratory_species/PlotM_mean_temperature_trends_all_stages.png", plot = gg, width = 10, height = 10, dpi = 400)
+```
+# 2.15. Models K-O: Modeling year trend in mean DO within each season
+Linear mixed effect models estimating the linear slope of year.
+Note: Initially, a range of models were attempted with 1) correlated random slope & intercept of year by site, 2) uncorrelated random slope and intercept, and 3) just a random intercept. The correlated slope & intercept fit best for all seasons and are the only models shown below. Some models required manually setting initial values to get them to converge.
+```{r}
+# set folder to save model output
+statpath <- "output/Task2_WQ_migratory_species/statistical_analysis/"
+
+# Make year data into integer (1-N)
+dodata$yearn <- dodata$year - 2015
+
+# fit model during migration period
+do_trend_migrate <- lmerTest::lmer(do ~ yearn + 
+                                       (1 | dayf) + 
+                                        (yearn | site), 
+             data = filter(dodata, is.na(do)==F,
+                           season == "migrate",
+                           # excludes sites not accessible by fish
+                           site %notin% exclude,
+                           # excludes 2 sites in Delaware River
+                           site %notin% c("TNC_26", "TNC_27")))
+summary(do_trend_migrate)
+ss <- getME(do_trend_migrate, c("theta","fixef"))
+# set initial values and update to get model to converge...
+# code from: https://rstudio-pubs-static.s3.amazonaws.com/33653_57fc7b8e5d484c909b615d8633c01d51.html
+do_trend_migrate2 <- update(do_trend_migrate,
+             start=ss,
+             control=lmerControl(optimizer="bobyqa",
+                            optCtrl=list(maxfun=2e5)))
+summary(do_trend_migrate2)
+do_trend_migrate <- do_trend_migrate2
+saveRDS(do_trend_migrate, here(statpath, 
+                                 "ModelK_do_trend_migrate.rds"))
+
+# fit model during spawning period
+do_trend_spawn <- 
+  lmerTest::lmer(do ~ yearn + (1 | dayf) + (yearn | site), 
+             data = filter(dodata, is.na(do)==F,
+                           season == "spawn",
+                           # excludes sites not accessible by fish
+                           site %notin% exclude,
+                           # excludes 2 sites in Delaware River
+                           site %notin% c("TNC_26", "TNC_27")))
+summary(do_trend_spawn)
+ss <- getME(do_trend_spawn, c("theta","fixef"))
+# set initial values and update to get model to converge...
+# code from: https://rstudio-pubs-static.s3.amazonaws.com/33653_57fc7b8e5d484c909b615d8633c01d51.html
+do_trend_spawn2 <- update(do_trend_spawn,
+             start=ss,
+             control=lmerControl(optimizer="bobyqa",
+                            optCtrl=list(maxfun=2e5)))
+summary(do_trend_spawn2)
+do_trend_spawn <- do_trend_spawn2
+saveRDS(do_trend_spawn, here(statpath, 
+                                 "ModelL_do_trend_spawn.rds"))
+
+# fit model during larval period
+do_trend_lar <-
+  lmerTest::lmer(do ~ yearn + (1|dayf) + (yearn | site),
+             data = filter(dodata, is.na(do)==F,
+                           season == "larvae",
+                           # excludes sites not accessible by fish
+                           site %notin% exclude,
+                           # excludes 2 sites in Delaware River
+                           site %notin% c("TNC_26", "TNC_27")))
+summary(do_trend_lar)
+ss <- getME(do_trend_lar, c("theta","fixef"))
+# set initial values and update to get model to converge...
+# code from: https://rstudio-pubs-static.s3.amazonaws.com/33653_57fc7b8e5d484c909b615d8633c01d51.html
+do_trend_lar2 <- update(do_trend_lar,
+             start=ss,
+             control=lmerControl(optimizer="Nelder_Mead",
+                            optCtrl=list(maxfun=2e5)))
+summary(do_trend_lar2)
+# note: I used allFit (see code in link) to find a suitable optimizer
+# all of them produced nearly the same log likelihood anyway
+do_trend_lar <- do_trend_lar2
+saveRDS(do_trend_lar, here(statpath, 
+                                 "ModelM_do_trend_lar.rds"))
+
+# fit model during juvenile period
+do_trend_juv <- 
+  lmerTest::lmer(do ~ yearn + (1|dayf) + (yearn | site), 
+             data = filter(dodata, is.na(do)==F,
+                           season == "juvenile",
+                           # excludes sites not accessible by fish
+                           site %notin% exclude,
+                           # excludes 2 sites in Delaware River
+                           site %notin% c("TNC_26", "TNC_27")))
+summary(do_trend_juv)
+saveRDS(do_trend_juv, here(statpath, 
+                                 "ModelN_do_trend_juv.rds"))
+
+# fit model during fall migration period
+do_trend_fall <- 
+  lmerTest::lmer(do ~ yearn + (1|dayf) + (yearn | site), 
+             data = filter(dodata, is.na(do)==F,
+                           season == "fall_mig",
+                           # excludes sites not accessible by fish
+                           site %notin% exclude,
+                           # excludes 2 sites in Delaware River
+                           site %notin% c("TNC_26", "TNC_27")))
+summary(do_trend_fall)
+saveRDS(do_trend_fall, here(statpath, 
+                                 "ModelO_do_trend_fall.rds"))
+
+# this is to plot dashed line showing model without day correction
+do_trend_fall_noday <- 
+  lmerTest::lmer(do ~ yearn + (yearn | site), 
+             data = filter(dodata, is.na(do)==F,
+                           season == "fall_mig",
+                           # excludes sites not accessible by fish
+                           site %notin% exclude,
+                           # excludes 2 sites in Delaware River
+                           site %notin% c("TNC_26", "TNC_27")))
+summary(do_trend_fall_noday)
+ss <- getME(do_trend_fall_noday, c("theta","fixef"))
+# get it to converge...
+# code from: https://rstudio-pubs-static.s3.amazonaws.com/33653_57fc7b8e5d484c909b615d8633c01d51.html
+do_trend_fall_noday2 <- update(do_trend_fall_noday,
+             start=ss,
+             control=lmerControl(optimizer="bobyqa",
+                            optCtrl=list(maxfun=2e5)))
+summary(do_trend_fall_noday2)
+do_trend_fall_noday <- do_trend_fall_noday2
+saveRDS(do_trend_fall_noday, here(statpath, 
+                                 "ModelO2_do_trend_fall_noday.rds"))
+
+```
+# 2.16. Plots N-T: plotting DO trends (linear slope of year) across sites
+```{r}
+# set folder to save model output
+statpath <- "output/Task2_WQ_migratory_species/statistical_analysis/"
+
+# First load all the model objects (from Models F-J)
+do_trend_migrate <- readRDS(here(statpath, 
+                                 "ModelK_do_trend_migrate.rds"))
+do_trend_spawn <- readRDS(here(statpath, 
+                                 "ModelL_do_trend_spawn.rds"))
+do_trend_lar <- readRDS(here(statpath, 
+                                 "ModelM_do_trend_lar.rds"))
+do_trend_juv <- readRDS(here(statpath, 
+                                 "ModelN_do_trend_juv.rds"))
+do_trend_fall <- readRDS(here(statpath, 
+                                 "ModelO_do_trend_fall.rds"))
+do_trend_fall_noday <- readRDS(here(statpath, 
+                                 "ModelO2_do_trend_fall_noday.rds"))
+
+# Next make data frames of model predictions for each season
+migrate_do_trend_df <- 
+  ggpredict(do_trend_migrate, terms = "yearn")
+spawn_do_trend_df <- 
+  ggpredict(do_trend_spawn, terms = "yearn")
+larvae_do_trend_df <- 
+  ggpredict(do_trend_lar, terms = "yearn")
+juv_do_trend_df <- 
+  ggpredict(do_trend_juv, terms = "yearn")
+fall_do_trend_df <- 
+  ggpredict(do_trend_fall, terms = "yearn")
+fall_do_trend_df_noday <- 
+  ggpredict(do_trend_fall_noday, terms = "yearn")
+
+# get max year for plotting
+maxyr <- max(migrate_do_trend_df$x, 
+             fall_do_trend_df$x, 
+             spawn_do_trend_df$x,
+             larvae_do_trend_df$x,
+             fall_do_trend_df$x)
+
+maxyrlab <- maxyr + 2015
+
+# Plot of DO trends in spring migration
+
+season_pts_do <- dosum_season %>%
+  group_by(season, yearf) %>% 
+  summarise(mean = mean(mean_mean),
+            sd = sd(mean_mean),
+            n = length(mean_mean),
+            .groups = "drop") %>%
+  mutate(se = sd/sqrt(n),
+            ll = mean-2*se,
+            ul = mean+2*se,
+            yearn = as.numeric(as.character(yearf))-2015)
+
+
+(migrate_do_plot <- 
+    ggplot(migrate_do_trend_df) +
+  geom_line(aes(x, predicted), size = 1.25, color = "firebrick") +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), 
+              alpha = .1) +
+  geom_point(aes(x = yearn, y = mean), 
+             data = filter(season_pts_do, season == "migrate"),
+               size = 2) +
+  geom_errorbar(aes(x = yearn, ymin = mean-2*se, ymax = mean+2*se),
+                width = 0,
+                data = filter(season_pts_do, 
+                              season == "migrate")) +  
+    theme_bw() +
+  scale_y_continuous(limits = c(4, 13)) +
+    scale_x_continuous(breaks = 1:maxyr,
+                       labels = 2016:maxyrlab) +
+    labs(x = "", 
+         y = "Mean DO trend",
+         title = "Apr 15 - May 15 (spring migration)") +
+    theme(text = element_text(size = 14)) +
+    annotate(geom = "text", x = 1, y = 4.3, 
+             label = paste0("Trend = ", 
+                            round(fixef(do_trend_migrate)[2], 2),
+                            " / yr",
+            "\np-value = ",                   
+            round(summary(do_trend_migrate)$coefficients[2,5], 3)),
+             hjust = 0, vjust = 0)
+)
+
+ggsave("output/Task2_WQ_migratory_species/PlotN_mean_DO_trends_spring_mig.png",
+       width = 5, height = 5, dpi = 400)
+
+# Plot of DO trends in spawning season
+
+(spawn_do_plot <- 
+    ggplot(spawn_do_trend_df) +
+  geom_line(aes(x, predicted), size = 1.25, color = "firebrick") +
+  geom_ribbon(aes(x=x, ymin = conf.low, ymax = conf.high), 
+              alpha = .1) +
+  geom_point(aes(x = yearn, y = mean), 
+             data = filter(season_pts_do, season == "spawn"),
+               size = 2) +
+  geom_errorbar(aes(x = yearn, ymin = mean-2*se, ymax = mean+2*se),
+                width = 0,
+                data = filter(season_pts_do, 
+                              season == "spawn")) +  
+  theme_bw() +
+  scale_y_continuous(limits = c(4, 13)) +
+    scale_x_continuous(breaks = 1:maxyr,
+                       labels = 2016:maxyrlab) +
+    labs(x = "", 
+         y = "Mean DO trend",
+         title = "May 16-31 (spawning)") +
+    theme(text = element_text(size = 14)) +
+    annotate(geom = "text", x = 1, y = 4.3, 
+             label = paste0("Trend = ", 
+                            round(fixef(do_trend_spawn)[2], 2),
+                            " / yr",
+            "\np-value = ",                   
+            round(summary(do_trend_spawn)$coefficients[2,5], 3)),
+             hjust = 0, vjust = 0)
+  )
+
+ggsave("output/Task2_WQ_migratory_species/PlotO_mean_DO_trends_spawning.png",
+       width = 5, height = 5, dpi = 400)
+
+# Plot of DO trends in larval season
+(larvae_do_plot <- 
+    ggplot(larvae_do_trend_df) +
+  geom_line(size = 1.25, color = "firebrick", aes(x, predicted)) +
+  geom_ribbon(aes(x=x,ymin = conf.low, ymax = conf.high), 
+              alpha = .1) +
+  geom_point(aes(x = yearn, y = mean), 
+             data = filter(season_pts_do, season == "larvae"),
+               size = 2) +
+  geom_errorbar(aes(x = yearn, ymin = mean-2*se, ymax = mean+2*se),
+                width = 0,
+                data = filter(season_pts_do, 
+                              season == "larvae")) +  
+  theme_bw() +
+  scale_y_continuous(limits = c(4, 13)) +
+    scale_x_continuous(breaks = 1:maxyr,
+                       labels = 2016:maxyrlab) +
+    labs(x = "", 
+         y = "Mean DO trend",
+         title = "Jun 1-30 (larvae)") +
+    theme(text = element_text(size = 14)) +
+    annotate(geom = "text", x = 1, y = 4.3, 
+             label = paste0("Trend = ", 
+                            round(fixef(do_trend_lar)[2], 2),
+                            " / yr",
+            "\np-value = ",                   
+            round(summary(do_trend_lar)$coefficients[2,5], 3)),
+             hjust = 0, vjust = 0)
+  )
+
+ggsave("output/Task2_WQ_migratory_species/PlotP_mean_DO_trends_larvae.png",
+       width = 5, height = 5, dpi = 400)
+
+(juv_do_plot <- 
+    ggplot(juv_do_trend_df) +
+  geom_line(size = 1.25, color = "firebrick", aes(x, predicted)) +
+  geom_ribbon(aes(x=x,ymin = conf.low, ymax = conf.high), 
+              alpha = .1) +
+  geom_point(aes(x = yearn, y = mean), 
+             data = filter(season_pts_do, season == "juvenile"),
+               size = 2) +
+  geom_errorbar(aes(x = yearn, ymin = mean-2*se, ymax = mean+2*se),
+                width = 0,
+                data = filter(season_pts_do, 
+                              season == "juvenile")) +  
+  theme_bw() +
+  scale_y_continuous(limits = c(4,13)) +
+    scale_x_continuous(breaks = 1:maxyr,
+                       labels = 2016:maxyrlab) +
+    labs(x = "", 
+         y = "Mean DO trend",
+         title = "Jul 1 - Sep 15 (juvenile)") +
+    theme(text = element_text(size = 14)) +
+    annotate(geom = "text", x = 1, y = 4.3, 
+             label = paste0("Trend = ", 
+                            round(fixef(do_trend_juv)[2], 2),
+                            " / yr",
+            "\np-value = ",                   
+            round(summary(do_trend_juv)$coefficients[2,5], 3)),
+             hjust = 0, vjust = 0)
+  )
+
+ggsave("output/Task2_WQ_migratory_species/PlotQ_mean_do_trends_juvenile.png",
+       width = 5, height = 5, dpi = 400)
+
+(fall_do_plot <- 
+    ggplot(fall_do_trend_df) +
+  geom_line(size = 1.25, color = "firebrick", aes(x, predicted)) +
+  geom_ribbon(aes(x=x, ymin = conf.low, ymax = conf.high), 
+              alpha = .1) +
+  geom_line(size = 1, color = "firebrick", aes(x, predicted),
+            data = fall_do_trend_df_noday, lty = 2) +  geom_point(aes(x = yearn, y = mean), 
+             data = filter(season_pts_do, season == "fall_mig"),
+               size = 2) +
+  geom_errorbar(aes(x = yearn, ymin = mean-2*se, ymax = mean+2*se),
+                width = 0,
+                data = filter(season_pts_do, 
+                              season == "fall_mig")) +  
+
+  theme_bw() +
+  scale_y_continuous(limits = c(4, 13)) +
+    scale_x_continuous(breaks = 1:maxyr,
+                       labels = 2016:maxyrlab) +
+    labs(x = "", 
+         y = "Mean DO trend",
+         title = "Sep 16 - Nov 30 (fall migration)") +
+    theme(text = element_text(size = 14)) +
+    annotate(geom = "text", x = 1, y = 4.3, 
+             label = paste0("Trend = ", 
+                            round(fixef(do_trend_fall)[2], 2),
+                            " / yr",
+            "\np-value = ",                   
+            round(summary(do_trend_fall)$coefficients[2,5], 3)),
+             hjust = 0, vjust = 0)
+  )
+
+ggsave("output/Task2_WQ_migratory_species/PlotS_mean_do_trends_fall.png",
+       width = 5, height = 5, dpi = 400)
+
+gg_do <- gridExtra::arrangeGrob(migrate_do_plot, 
+                             spawn_do_plot,
+                             larvae_do_plot,
+                             juv_do_plot,
+                             fall_do_plot)
+
+ggsave("output/Task2_WQ_migratory_species/PlotT_mean_do_trends_all_stages.png", plot = gg_do, width = 10, height = 10, dpi = 400)
+```

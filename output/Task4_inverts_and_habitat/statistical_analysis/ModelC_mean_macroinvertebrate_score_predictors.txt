@@ -1,0 +1,39 @@
+This model tested whether there is an effect of on mean July temperature, mean July dissolved oxygen, or mean habitat quality score on the mean macroinvertebrate score across sites. The model including July temperature and dissolved oxygen performed best based on AIC, but was very similar to that of the model only containing dissolved oxygen (AIC = 103.05 vs. 103.02). In the top-performing model, only dissolved oxygen was statistically significant, with a positive slope predicting an increase in macroinvertebrate index of 8.4 points per each mg/L increase in dissolved oxygen (p = 0.005). See Task 4, Plot P.
+
+> AIC(inv.temp.mod, inv.do.mod, inv.temp.do.mod, inv.temp.do.hab.mod)
+                    df      AIC
+inv.temp.mod         3 113.012177
+inv.do.mod           3 103.283670
+inv.temp.do.mod      4 102.672311	
+inv.temp.do.hab.mod  5 104.507930
+
+
+Analysis of Variance Table
+
+Model 1: index_mean ~ mean_july_do
+Model 2: index_mean ~ mean_july_temp + mean_july_do
+  Res.Df      RSS Df Sum of Sq      F  Pr(>F)
+1     11 1353.476                            
+2     10 1107.165  1  246.3115 2.2247 0.16667
+
+> summary(inv.temp.do.mod)
+Call:
+lm(formula = index_mean ~ mean_july_temp + mean_july_do, data = hab.inv)
+
+Residuals:
+      Min        1Q    Median        3Q       Max 
+-16.88506  -3.34247  -2.07159   4.43105  17.42119 
+
+Coefficients:
+                 Estimate Std. Error  t value  Pr(>|t|)   
+(Intercept)    -172.62379  114.38645 -1.50913 0.1621950   
+mean_july_temp    6.73895    4.51810  1.49154 0.1666749   
+mean_july_do      9.47670    2.38134  3.97957 0.0026028 **
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+Residual standard error: 10.5222 on 10 degrees of freedom
+  (10 observations deleted due to missingness)
+Multiple R-squared:  0.613331,	Adjusted R-squared:  0.535998 
+F-statistic: 7.93097 on 2 and 10 DF,  p-value: 0.00864361
+

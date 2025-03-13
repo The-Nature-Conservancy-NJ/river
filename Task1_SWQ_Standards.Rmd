@@ -1,0 +1,2059 @@
+---
+title: "Task 1. SWQ Standards"
+author: "Mike Allen"
+date: "2/4/2022"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+# How to run this code
+Run the first section ("chunk") of this Rmd document (section 1.0). That will load all libraries, functions, and data. After that, you can scroll down to the plot or table you wish to make or the model you wish to run and run just that section. Plots, tables and models are labeled with letters (A-Z) and correspond to those in the "Task 2" sub-folder in the "output" folder. See the README file in that sub-folder for figure captions and information.
+
+The following text is a general description of Task 1.
+
+# Task 1 description: Surface Water Quality Standards (SWQS)
+a. Analyze logger data to determine if select monitoring reaches are impaired for sensitive aquatic life (e.g., macroinvertebrates, trout) in freshwater streams. 
+- Analyze daily/monthly data at each monitoring location against state SWQS criteria. Which sites are meeting/not meeting SWQS (do temperatures and dissolved oxygen meet criteria required to support aquatic life and trout?)?
+b. How often do sites exceed SWQS for temperature (how many days per year)?
+c. How often do sites exceed SWQS for dissolved oxygen (how many days per year)?
+
+Products:
+• Data visualization (figures, maps, plots) of seasonal, monthly, and diel fluctuations in flow, physiochemical conditions to address the items in Task 1 with respect to state water quality criteria.
+
+• Meetings as needed to refine objectives and desired outputs.
+
+• Summary statistics and statistical analysis of same along with associated interpretative text.
+
+Temperature SWQS information:
+	1. FW2-TP - Temperature	Shall not exceed a daily maximum of 22 degrees Celsius or rolling seven-day average of the daily maximum of 19 degrees Celsius, unless due to natural conditions
+	  - How many days exceed 22 C
+	  - How many days 7-d rolling average of daily max exceed 19 C
+	
+	2. FW2-TM - Shall not exceed a daily maximum of 25 degrees Celsius or rolling seven-day average of the daily maximum of 23 degrees Celsius, unless due to natural conditions	
+    - How many days exceed 25 C
+    - How many days 7-d rolling average of daily max exceed 23 C
+
+	3. FW2-NT - Shall not exceed a daily maximum of 31 degrees Celsius or rolling seven-day average of the daily maximum of 28 degrees Celsius, unless due to natural conditions	
+	
+Dissolved Oxygen SWQS information:
+
+FW2-TP
+Not less than 7.0 at any time 
+
+FW2-TM
+24-hour average not less than 6.0. Not less than 5.0 at any time
+
+FW2-NT
+24-hour average not less than 5.0, but not less than 4.0 at any time 
+
+FW2-TM, FW2-NT
+Supersaturated dissolved oxygen values shall be expressed as their corresponding 100 percent saturation values for purposes of calculating 24 hour averages
+
+# 1.0. Load libraries, format data, etc.
+After you run this section, all other sections should work independently.
+```{r}
+library(dplyr)
+library(knitr)
+library(kableExtra)
+library(lubridate)
+library(wesanderson)
+library(ggplot2)
+library(forcats)
+library(tidyr)
+library(here)
+# library(zoo) # used as zoo::
+
+plotsave <- "output/Task1_SWQS_loggers/"
+
+# read in compiled logger data (including flagged data)
+p <- readRDS("output/compiled_logger_data.rds") %>%
+  mutate(order = as.numeric(substr(site, 5, 6)),
+         site = fct_reorder(site, order))
+
+# format final compiled temperature data
+tmax <- p %>%
+  filter(FLAG_Temp == 0) %>%
+  mutate(day = yday(datetime)) %>%
+  group_by(site, year, day) %>%
+  summarise(max_temp = max(temp, na.rm = T),
+            .groups = "drop") %>%
+  group_by(site, year) %>%
+  mutate(roll_temp = zoo::rollmean(max_temp, 7, fill = NA)) %>%
+  droplevels() %>%
+  ungroup() %>%
+  # remove obvious outliers at start of time series
+  filter(as.logical(1-(site == "TNC_25" & 
+                         year == 2018 & 
+                         day == 122))) %>%
+  filter(as.logical(1-(site == "TNC_23" & 
+                         year == 2018 & 
+                         day == 122))) %>%
+  filter(as.logical(1-(site == "TNC_23" & 
+                         year == 2021 & 
+                         day == 118))) %>%
+  right_join(expand.grid(site = unique(p$site), 
+                         year = 2016:2024, day = 82:339)) %>%
+  arrange(site, year, day) %>%
+  mutate(summer = case_when(day %in% 152:243 ~ 1,
+                            TRUE ~ 0))
+
+# summarize number of days above temperature thresholds
+temp_count <- tmax %>%
+  filter(is.na(max_temp)==F) %>%
+  mutate(max_22 = ifelse(max_temp > 22, 1, 0),
+         max_25 = ifelse(max_temp > 25, 1, 0),
+         max_31 = ifelse(max_temp > 31, 1, 0),
+         roll_19 = ifelse(roll_temp > 19, 1, 0),
+         roll_23 = ifelse(roll_temp > 23, 1, 0),
+         roll_28 = ifelse(roll_temp > 28, 1, 0),
+         FW2_TP = case_when(max_22 > 0 ~ 1,
+                            roll_19 > 0 ~ 1, 
+                            TRUE ~ 0),
+         FW2_TM = case_when(max_25 > 0 ~ 1,
+                            roll_23 > 0 ~ 1, 
+                            TRUE ~ 0),
+         FW2_NT = case_when(max_31 > 0 ~ 1,
+                            roll_28 > 0 ~ 1,
+                            TRUE ~ 0)) %>%
+  group_by(site, year) %>%
+  summarise(max_22 = sum(max_22),
+            max_25 = sum(max_25),
+            max_31 = sum(max_31),
+            roll_19 = sum(roll_19, na.rm = T),
+            roll_23 = sum(roll_23, na.rm = T),
+            roll_28 = sum(roll_28, na.rm = T),
+            Trout_Production = sum(FW2_TP),
+            Trout_Maintenance = sum(FW2_TM),
+            Non.Trout = sum(FW2_NT),
+            summer_days = sum(summer)/92,
+            .groups = "drop") %>%
+  pivot_longer(cols = 9:11, names_to = "Threshold",
+                      values_to = "days_over") %>%
+  mutate(Threshold = gsub(gsub(Threshold, pattern = "_", 
+                          replacement = " "), pattern = "\\.",
+                          replacement = "-")) %>%
+  ungroup() %>%
+  select(-starts_with("max"), -starts_with("roll"))
+
+# Create data frame listing sites with low temperature data coverage
+temp_cov <- temp_count[temp_count$summer_days < 0.8,] %>%
+  select(site, year, summer_days) %>%
+  distinct() %>%
+  mutate(low = case_when((summer_days < 0.8 &
+                            summer_days >= 0.5) ~ "*",
+                         summer_days < 0.5 ~ "**"
+  ))
+
+# format final compiled DO data
+dmin <- p %>%
+  filter(FLAG_DO == 0) %>%
+  mutate(day = yday(datetime),
+         do_adj2 = case_when((is.na(do)==F & is.na(do_adj)==T) ~
+                               do,
+                             TRUE ~ do_adj),
+         adj = case_when(is.na(do_adj)==F ~ 1,
+                         TRUE ~ 0)) %>%
+  group_by(site, year, day) %>%
+  summarise(min_DO = min(do_adj2),
+            mean24_DO = mean(do_adj2),
+            .groups = "drop") %>%
+  droplevels() %>%
+  right_join(expand.grid(site = unique(p$site), 
+                         year = 2016:2024, day = 82:339)) %>%
+  arrange(site, year, day) %>%
+  mutate(summer = case_when(day %in% 152:243 ~ 1,
+                            TRUE ~ 0))
+
+# summarize number of days below DO thresholds
+DO_count <- dmin %>%
+  filter(is.na(min_DO)==F) %>%
+  mutate(min_7 = ifelse(min_DO < 7, 1, 0),
+         min_5 = ifelse(min_DO < 5, 1, 0),
+         min_4 = ifelse(min_DO < 4, 1, 0),
+         mean24_6 = ifelse(mean24_DO < 6, 1, 0),
+         mean24_5 = ifelse(mean24_DO < 5, 1, 0),
+         FW2_TP = case_when(min_7 > 0 ~ 1,
+                            TRUE ~ 0),
+         FW2_TM = case_when(min_5 > 0 ~ 1,
+                            mean24_6 > 0 ~ 1,
+                            TRUE ~ 0),
+         FW2_NT = case_when(min_4 > 0 ~ 1,
+                            mean24_5 > 0 ~ 1,
+                            TRUE ~ 0)) %>%
+  group_by(site, year) %>%
+  summarise(min_7 = sum(min_7),
+            min_5 = sum(min_5),
+            min_4 = sum(min_4),
+            mean24_6 = sum(mean24_6, na.rm = T),
+            mean24_5 = sum(mean24_5, na.rm = T),
+            Trout_Production = sum(FW2_TP),
+            Trout_Maintenance = sum(FW2_TM),
+            Non.Trout = sum(FW2_NT),
+            summer_days = sum(summer)/92,
+            .groups = "drop") %>%
+  pivot_longer(cols = 8:10, names_to = "Threshold",
+                      values_to = "days_under") %>%
+  select(site, year, Threshold, days_under, summer_days) %>%
+  mutate(Threshold = gsub(gsub(Threshold, pattern = "_", 
+                          replacement = " "), pattern = "\\.",
+                          replacement = "-"))
+
+# Create data frame listing sites with low DO data coverage
+DO_cov <- DO_count[DO_count$summer_days < 0.8,] %>%
+  select(site, year, summer_days) %>%
+  distinct() %>%
+  mutate(low = case_when((summer_days < 0.8 &
+                            summer_days >= 0.5) ~ "*",
+                         summer_days < 0.5 ~ "**"
+  ))
+
+
+# combine "days exceeding" counts for temperature and DO
+both_count <- temp_count %>%
+  left_join(DO_count, by = c("site", "year", "Threshold"))
+
+
+# compile "either threshold" data
+either <- tmax %>%
+  left_join(dmin, by = c("site", "year", "day", "summer"))
+
+# either count
+either_count <- either %>%
+  mutate(max_22 = ifelse(max_temp > 22, 1, 0),
+         max_25 = ifelse(max_temp > 25, 1, 0),
+         max_31 = ifelse(max_temp > 31, 1, 0),
+         roll_19 = ifelse(roll_temp > 19, 1, 0),
+         roll_23 = ifelse(roll_temp > 23, 1, 0),
+         roll_28 = ifelse(roll_temp > 28, 1, 0),
+         min_7 = ifelse(min_DO < 7, 1, 0),
+         min_5 = ifelse(min_DO < 5, 1, 0),
+         min_4 = ifelse(min_DO < 4, 1, 0),
+         mean24_6 = ifelse(mean24_DO < 6, 1, 0),
+         mean24_5 = ifelse(mean24_DO < 5, 1, 0),
+         FW2_TP = case_when(max_22 > 0 ~ 1,
+                            roll_19 > 0 ~ 1,
+                            min_7 > 0 ~ 1,
+                            TRUE ~ 0),
+         FW2_TM = case_when(max_25 > 0 ~ 1,
+                            roll_23 > 0 ~ 1,
+                            min_5 > 0 ~ 1,
+                            mean24_6 > 0 ~ 1,
+                            TRUE ~ 0),
+         FW2_NT = case_when(max_31 > 0 ~ 1,
+                            roll_28 > 0 ~ 1,
+                            min_4 > 0 ~ 1,
+                            mean24_5 > 0 ~ 1,
+                            TRUE ~ 0),
+         max_temp_NA = ifelse(is.na(max_temp), 1, 0),
+         min_DO_NA = ifelse(is.na(min_DO), 1, 0)) %>%
+    group_by(site, year) %>%
+    summarise(Trout_Production = sum(FW2_TP),
+            Trout_Maintenance = sum(FW2_TM),
+            Non.Trout = sum(FW2_NT),
+            summer_days_temp = sum(summer==1 & max_temp_NA == 0)/92,
+            summer_days_DO = sum(summer==1 & min_DO_NA == 0)/92,
+            .groups = "drop") %>%
+  pivot_longer(cols = 3:5, names_to = "Threshold",
+                      values_to = "days_exceeding") %>%
+  select(site, year, Threshold, days_exceeding, 
+         summer_days_temp, summer_days_DO) %>%
+  mutate(Threshold = gsub(gsub(Threshold, pattern = "_", 
+                          replacement = " "), pattern = "\\.",
+                          replacement = "-")) %>%
+  filter(!(summer_days_temp==0 & summer_days_DO==0))
+```
+# 1.1. Plot A: Temperature SWQS: plot daily max temp for each site/year vs. thresholds
+```{r}
+# plot daily max vs. thresholds
+tmax %>%
+  ggplot() +
+  geom_hline(
+    yintercept = 22,
+    color = "gray",
+    lty = 3,
+    size = .75
+  ) +
+  geom_hline(
+    yintercept = 25,
+    color = "gray",
+    lty = 2,
+    size = .75
+  ) +
+  geom_hline(
+    yintercept = 31,
+    color = "gray",
+    lty = 1,
+    size = .75
+  ) +
+  geom_line(aes(x = day, y = max_temp,
+                color = as.factor(year)),
+            alpha = 0.75) +
+  facet_wrap( ~ site) +
+  scale_color_brewer(palette = "Paired") +
+  scale_x_continuous(
+    breaks = c(91, 152, 213, 274, 335),
+    labels = c("Apr", "Jun", "Aug",
+               "Oct", "Dec")
+  ) +
+  theme_bw() +
+  theme(
+    text = element_text(size = 14),
+    axis.text.x = element_text(size = 10),
+    strip.background = element_rect(fill = "white")
+  ) +
+  labs(y = "Daily maximum temperature (C)", x = "",
+       color = "Year") +
+  annotate("text", x = 335, y = 30, label = "NT", 
+           color = "darkgray", size = 2) +
+  annotate("text", x = 335, y = 24, label = "TM", 
+           color = "darkgray", size = 2) +
+  annotate("text", x = 335, y = 21, label = "TP", 
+           color = "darkgray", size = 2)
+
+ggsave(here(plotsave, "PlotA_tmax_by_day_year_site.png"),
+        height = 7, width = 9, dpi = 400)
+#note: palette originally chosen (Dark2) only allowed for 8 colors, changed to Paired which has 12. This may need further adjustment or personalized color palette depending on visibility. Also changed in subsequent plots (e.g., Plot B)
+```
+# 1.2. Plot B: Temperature SWQS: plot rolling-average daily max temp for each site/year vs. thresholds
+```{r}
+# plot rolling average daily max vs. thresholds
+tmax %>%
+  ggplot() +
+  geom_hline(yintercept = 19, color = "gray", lty = 3, size = .75) +
+  geom_hline(yintercept = 23, color = "gray", lty = 2, size = .75) +
+  geom_hline(yintercept = 28, color = "gray", lty = 1, size = .75) +
+  geom_line(aes(x = day, y = roll_temp, 
+                 color = as.factor(year)),
+             alpha = 0.75) +
+  facet_wrap(~site) +
+  scale_color_brewer(palette = "Paired") +
+  scale_x_continuous(breaks = c(91, 152, 213, 274, 335),
+                     labels = c("Apr", "Jun", "Aug", 
+                                "Oct", "Dec")) +
+  theme_bw() +
+  theme(text = element_text(size = 14),
+        axis.text.x = element_text(size = 10),
+        strip.background = element_rect(fill = "white")) +
+  labs(y = "Daily maximum temperature (C)\n7-day rolling average", 
+       x = "",
+       color = "Year") +
+  annotate("text", x = 335, y = 27, label = "NT", 
+           color = "darkgray", size = 2) +
+  annotate("text", x = 335, y = 22, label = "TM", 
+           color = "darkgray", size = 2) +
+  annotate("text", x = 335, y = 18, label = "TP", 
+           color = "darkgray", size = 2)
+
+ggsave(here(plotsave, "PlotB_tmax_by_day_year_site_rolling.png"),
+          height = 7, width = 9, dpi = 400)
+```
+# 1.3. Table A: number of days with temperature data per year & site
+```{r}
+# create table with Kable
+day_table <- tmax %>%
+  droplevels() %>%
+  filter(is.na(max_temp) != T) %>%
+  group_by(site, year) %>%
+  tally() %>%
+  left_join(temp_cov) %>%
+  mutate(n = case_when(is.na(low)==F ~ paste0(as.character(n), low),
+                          TRUE ~ as.character(n))) %>%
+  select(-low) %>%
+  pivot_wider(id_cols = site, 
+              names_from = year, 
+              values_from = n) %>%
+  kbl(caption = "Total number of days with temperature data in each year. Asterisks indicate years with less complete data coverage during the warmest period (Jun-Aug). * = less than 80% coverage; ** = less than 50% coverage.") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+day_table
+
+# save the table to HTML file
+save_kable(day_table,
+           here(plotsave, "TableA_tmax_n_table.html"))
+```
+# 1.4. Table B: Days above Trout Maintenance temperature threshold
+```{r}
+days_over_table <- temp_count %>%
+  filter(Threshold == "Trout Maintenance") %>%
+  select(site, year, days_over, summer_days) %>%
+  left_join(temp_cov) %>%
+  mutate(days_over = case_when(is.na(low)==F ~ 
+                         paste0(as.character(days_over), low),
+                          TRUE ~ as.character(days_over))) %>%
+  select(-low) %>%
+  pivot_wider(id_cols = site, names_from = year,
+              values_from = days_over) %>%
+  kbl(caption = "Total number of days with temperature readings over the Trout Maintenance threshold. Asterisks indicate years with less complete data during the warmest period (Jun-Aug). * = less than 80% coverage; ** = less than 50% coverage.") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+days_over_table
+
+# save the table to HTML file
+save_kable(
+  days_over_table,
+  "output/Task1_SWQS_loggers/TableB_tmax_days_over_TM_table.html")
+
+rm(day_table, days_over_table)
+```
+# 1.5. Plot C: number of days exceeding temperature thresholds
+```{r}
+temp_count_bad <- temp_count %>%
+  left_join(temp_cov) %>%
+  filter(is.na(low) == F)
+
+temp_count %>%
+  filter(summer_days >= 0.8) %>%
+ggplot() +
+  geom_line(aes(x = year, y = days_over, color = Threshold)) +
+  geom_point(aes(x = year, y = days_over, color = Threshold), 
+             size = 3) +
+  geom_point(data = temp_count_bad, aes(x = year, y = days_over,
+                                        shape = "*",
+                                        color = Threshold)) +
+  facet_wrap(~site) +
+  scale_color_brewer(palette = "Paired") +
+  theme_bw() +
+  theme(text = element_text(size = 14),
+        axis.text.x = element_text(size = 7),
+        strip.background = element_rect(fill = "white"),
+        legend.position = "top",
+        legend.justification="center",
+        legend.margin=margin(0,0,0,0),
+        legend.box.margin=margin(-8,-8,-8,-8)) +
+  labs(x = "", y = "Days above temp. threshold") +
+  guides(shape = "none")
+
+ggsave(here(plotsave,
+  "PlotC_days_above_temp_threshold_timeseries.png"),
+       height = 7, width = 9, dpi = 400)
+
+rm(temp_count_bad)
+```
+# 1.6. Plot C (individual): no. days exceeding temp. thresholds - individually by site
+Same as Plot C but separated out into one plot per site
+```{r}
+sites <- unique(temp_count$site)
+i <- sites[1]
+
+# loop to make a plot for each site
+for( i in sites ){
+  print(i)
+temp_count_bad <- temp_count %>%
+  left_join(temp_cov, by = c("site", "year", "summer_days")) %>%
+  filter(is.na(low) == F, 
+         site == i)
+
+if(nrow(temp_count_bad)==0){
+  temp_count_bad <- data.frame(
+    site = i,
+    year = 2016,
+    days_over = -50,
+    Threshold = "Trout Maintenance",
+    low = "**"
+  )
+}
+
+# x11(height = 4, width = 6); 
+temp_count %>%
+  filter(summer_days >= 0.8,
+         site == i) %>%
+ggplot() +
+  geom_line(aes(x = year, y = days_over, color = Threshold)) +
+  geom_point(aes(x = year, y = days_over, color = Threshold), 
+             size = 3.5) +
+  geom_point(data = filter(temp_count_bad, site == i), 
+             aes(x = year, y = days_over,
+                 color = Threshold), shape = "*",
+             size = 4) +
+  scale_color_brewer(palette = "Paired") +
+  scale_y_continuous(limits = c(0,150)) +
+  scale_x_continuous(breaks = 2016:2024,
+                     labels = as.character(2016:2024),
+                     limits = c(2016, 2024)) +
+  theme_bw() +
+  theme(text = element_text(size = 14),
+        axis.text.x = element_text(size = 10),
+        strip.background = element_rect(fill = "white"),
+        legend.position = "right",
+        legend.justification="center",
+        # legend.margin=margin(0,0,0,0),
+        legend.box.margin=margin(-8,-8,-8,-8)) +
+  labs(x = "", y = "Days above temp. threshold",
+       title = i) +
+  guides(shape = "none")
+
+ggsave(
+  paste0(plotsave, "PlotC_individual/",
+  "PlotC_", i, "_days_above_temp_threshold_timeseries.png"),
+       height = 4, width = 6, dpi = 400)
+
+rm(temp_count_bad)
+}
+```
+# 1.7. Plot D: "days over temperature threshold" boxplots by site
+```{r}
+temp_count %>%
+  filter(summer_days >= 0.8) %>%
+  group_by(site) %>%
+  mutate(mean_days = mean(days_over)) %>%
+  ungroup() %>%
+  mutate(site = fct_reorder(as.factor(site), 
+                            days_over, 
+                            .fun = "mean",
+                            .desc = T)) %>%
+  ggplot() +
+  geom_boxplot(aes(y = site, x = days_over), 
+               outlier.color = "transparent",
+               color = "darkgray") +
+  geom_point(aes(y = site, x = days_over, 
+                 color = as.factor(year)), size = 3, 
+             alpha =0.75, shape = 16) +
+  scale_color_manual(values = c(wes_palettes$Darjeeling1,
+                                wes_palettes$Darjeeling2)) +
+  theme_bw() +
+  theme(text = element_text(size = 14),
+        legend.position = c(0.687,0.14),
+        legend.justification="left",
+        legend.margin=margin(2,2,2,2),
+        legend.box.margin=margin(0,0,0,0),
+        legend.key.size = unit(0.25, "cm"),
+        legend.background = element_rect(color = "darkgray"),
+        strip.background = element_rect(fill = "white")) +
+  labs(y = "", x = "Days above temperature threshold", 
+       color = "Year") +
+    facet_wrap(~Threshold)
+
+ggsave(here(plotsave,
+  "PlotD_days_above_temp_threshold_boxplot.png"),
+       width = 8,
+       height = 6, dpi = 400)
+```
+# 1.8. Plot E: DO SWQS, plot daily min for each site/year vs. thresholds
+```{r}
+# plot daily min DO vs. thresholds
+dmin %>%
+  ggplot() +
+  geom_hline(yintercept = 7, color = "gray", lty = 3, size = .75) +
+  geom_hline(yintercept = 5, color = "gray", lty = 2, size = .75) +
+  geom_hline(yintercept = 4, color = "gray", lty = 1, size = .75) + 
+  geom_line(aes(x = day, y = min_DO, 
+                 color = as.factor(year)),
+             alpha = 0.75) +
+  facet_wrap(~site) +
+  scale_color_brewer(palette = "Paired") +
+  scale_x_continuous(breaks = c(91, 152, 213, 274, 335),
+                     labels = c("Apr", "Jun", "Aug", 
+                                "Oct", "Dec")) +
+  theme_bw() +
+  theme(text = element_text(size = 14),
+        strip.background = element_rect(fill = "white")) +
+  labs(y = "Daily minimum dissolved oxygen", x = "",
+       color = "Year") +
+  annotate("text", x = 335, y = 3, label = "NT", 
+           color = "darkgray", size = 2) +
+  annotate("text", x = 335, y = 6, label = "TM", 
+           color = "darkgray", size = 2) +
+  annotate("text", x = 335, y = 8, label = "TP", 
+           color = "darkgray", size = 2)
+
+ggsave(here(plotsave,
+  "PlotE_dmin_adj_by_day_year_site.png"),
+       height = 7, width = 9, dpi = 400)
+```
+# 1.9. Plot F: DO SWQS, plot 24-h average daily DO for each site/year vs. thresholds
+```{r}
+# plot 24-h average DO vs. thresholds
+dmin %>%
+  ggplot() +
+  geom_hline(yintercept = 6, color = "gray", lty = 2, size = .75) +
+  geom_hline(yintercept = 5, color = "gray", lty = 1, size = .75) +
+  geom_line(aes(x = day, y = mean24_DO, 
+                 color = as.factor(year)),
+             alpha = 0.75) +
+  facet_wrap(~site) +
+  scale_color_brewer(palette = "Paired") +
+  scale_x_continuous(breaks = c(91, 152, 213, 274, 335),
+                     labels = c("Apr", "Jun", "Aug", 
+                                "Oct", "Dec")) +
+  theme_bw() +
+  theme(text = element_text(size = 14),
+        axis.text.x = element_text(size = 12),
+        strip.background = element_rect(fill = "white")) +
+  labs(y = "Daily average dissolved oxygen", x = "",
+       color = "Year") +
+  annotate("text", x = 335, y = 4, label = "NT", 
+           color = "darkgray", size = 2) +
+  annotate("text", x = 335, y = 7, label = "TM", 
+           color = "darkgray", size = 2) 
+
+ggsave(here(plotsave,
+  "PlotF_dmin_by_day_year_24h_avg.png"),
+  height = 7, width = 9, dpi = 400)
+```
+# 1.10. Table C: create table of number of DO measurement days per year per site
+```{r}
+day_table <- tmax %>%
+  droplevels() %>%
+  filter(is.na(max_temp) != T) %>%
+  group_by(site, year) %>%
+  tally() %>%
+  left_join(temp_cov) %>%
+  mutate(n = case_when(is.na(low)==F ~ paste0(as.character(n), low),
+                          TRUE ~ as.character(n))) %>%
+  select(-low) %>%
+  pivot_wider(id_cols = site, 
+              names_from = year, 
+              values_from = n)
+
+# create table with Kable
+day_table_DO <- dmin %>%
+  droplevels() %>%
+  filter(is.na(min_DO) != T) %>%
+  group_by(site, year) %>%
+  tally() %>%
+  left_join(DO_cov) %>%
+  mutate(n = case_when(is.na(low)==F ~ paste0(as.character(n), low),
+                          TRUE ~ as.character(n))) %>%
+  select(-low) %>%
+  pivot_wider(id_cols = site, 
+              names_from = year, 
+              values_from = n) %>%
+  kbl(caption = "Total number of days with dissolved oxygen data in each year. Asterisks indicate years with less complete data coverage during the warmest period (Jun-Aug). * = less than 80% coverage; ** = less than 50% coverage.") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+day_table_DO
+
+# save the table to HTML file
+save_kable(day_table_DO,
+           here(plotsave, "TableC_dmin_n_table.html"))
+
+rm(day_table_DO, day_table)
+```
+# 1.11. Table D: Table of "Days below DO threshold"
+```{r}
+days_below_table <- DO_count %>%
+  filter(Threshold == "Trout Maintenance") %>%
+  select(site, year, days_under, summer_days) %>%
+  left_join(DO_cov) %>%
+  mutate(days_under = case_when(is.na(low)==F ~ 
+                         paste0(as.character(days_under), low),
+                          TRUE ~ as.character(days_under))) %>%
+  select(-low) %>%
+  pivot_wider(id_cols = site, names_from = year,
+              values_from = days_under) %>%
+  kbl(caption = "Total number of days with dissolved oxygen readings below the minimum Trout Maintenance threshold. Asterisks indicate years with less complete data during the warmest period (Jun-Aug). * = less than 80% coverage; ** = less than 50% coverage.") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+days_below_table
+
+# save the table to HTML file
+save_kable(days_below_table,
+           here(plotsave, "TableD_dmin_days_under_TM_table.html"))
+
+rm(days_below_table)
+```
+# 1.12. Plot G: number of days below DO thresholds (time series)
+To change font size of years, change the number in this line of code: "axis.text.x = element_text(size = 8),". (This may be necessary in future years if year labels begin to overlap.)
+```{r}
+# create a separate data frame of years with < 80% Jun-Aug coverage
+DO_count_bad <- DO_count %>%
+  left_join(DO_cov) %>%
+  filter(is.na(low) == F)
+
+DO_count %>%
+  # filter out site/year with < 80% coverage during Jun-Aug
+  mutate(days_under = case_when(summer_days>=0.8 ~ days_under,
+                                TRUE ~ NaN)) %>%
+ggplot() +
+  geom_line(aes(x = year, y = days_under, color = Threshold)) +
+  geom_point(aes(x = year, y = days_under, color = Threshold), 
+             size = 3) +
+  geom_point(data = DO_count_bad, aes(x = year, y = days_under,
+                                        shape = "*",
+                                        color = Threshold)) +
+  facet_wrap(~site) +
+  scale_color_brewer(palette = "Paired") +
+  theme_bw() +
+  theme(text = element_text(size = 14),
+        axis.text.x = element_text(size = 8),
+        strip.background = element_rect(fill = "white"),
+        legend.position = "top",
+        legend.justification="center",
+        legend.margin=margin(0,0,0,0),
+        legend.box.margin=margin(-8,-8,-8,-8)) +
+  labs(x = "", y = "Days below dissolved oxygen threshold") +
+  guides(shape = "none")
+
+ggsave(here(plotsave, "PlotG_days_below_DO_threshold.png"),
+       height = 7, width = 9, dpi = 400)
+```
+# 1.13. Plot G (individual): No. days below DO thresholds - individually by site
+Same as Plot G but separated into one plot per site.
+```{r}
+sites <- unique(DO_count$site)
+i <- sites[1]
+
+# loop to make a plot for each site
+for( i in sites ){
+  print(i)
+DO_count_bad <- DO_count %>%
+  left_join(DO_cov, by = c("site", "year", "summer_days")) %>%
+  filter(is.na(low) == F, 
+         site == i)
+
+if(nrow(DO_count_bad)==0){
+  temp_count_bad <- data.frame(
+    site = i,
+    year = 2016,
+    days_under = -50,
+    Threshold = "Trout Maintenance",
+    low = "**"
+  )
+}
+
+# x11(height = 4, width = 6); 
+DO_count %>%
+  filter(summer_days >= 0.8,
+         site == i) %>%
+ggplot() +
+  geom_line(aes(x = year, y = days_under, color = Threshold)) +
+  geom_point(aes(x = year, y = days_under, color = Threshold), 
+             size = 3.5) +
+  geom_point(data = filter(DO_count_bad, site == i), 
+             aes(x = year, y = days_under,
+                 color = Threshold), shape = "*",
+             size = 4) +
+  scale_color_brewer(palette = "Paired") +
+  scale_y_continuous(limits = c(0,150)) +
+  scale_x_continuous(breaks = 2016:2024,
+                     labels = as.character(2016:2024),
+                     limits = c(2016, 2024)) +
+  theme_bw() +
+  theme(text = element_text(size = 14),
+        axis.text.x = element_text(size = 10),
+        strip.background = element_rect(fill = "white"),
+        legend.position = "right",
+        legend.justification="center",
+        # legend.margin=margin(0,0,0,0),
+        legend.box.margin=margin(-8,-8,-8,-8)) +
+  labs(x = "", y = "Days below dissolved oxygen threshold",
+       title = i) +
+  guides(shape = "none")
+
+ggsave(
+  paste0(plotsave, "PlotG_individual/",
+  "PlotG_", i, "_days_below_DO_threshold_timeseries.png"),
+       height = 4, width = 6, dpi = 400)
+
+rm(DO_count_bad)
+}
+```
+# 1.14. Plot H: "days below DO threshold" boxplots by site
+```{r}
+DO_count %>%
+  filter(summer_days >= 0.8) %>%
+  group_by(site) %>%
+  mutate(mean_days = mean(days_under)) %>%
+  ungroup() %>%
+  mutate(site = fct_reorder(as.factor(site), 
+                            days_under, 
+                            .fun = "mean",
+                            .desc = T)) %>%
+  ggplot() +
+  geom_boxplot(aes(y = site, x = days_under), 
+               outlier.color = "transparent",
+               color = "darkgray") +
+  geom_point(aes(y = site, x = days_under, 
+                 color = as.factor(year)), size = 3, 
+             alpha =0.75, shape = 16) +
+  scale_color_manual(values = c(wes_palettes$Darjeeling1,
+                                wes_palettes$Darjeeling2)) +
+  theme_bw() +
+  theme(text = element_text(size = 14),
+        # legend.position = c(0.89,0.14),
+        legend.position = c(0.687,0.14),
+        legend.justification="left",
+        legend.margin=margin(2,2,2,2),
+        legend.box.margin=margin(0,0,0,0),
+        legend.key.size = unit(0.25, "cm"),
+        legend.background = element_rect(color = "darkgray"),
+        strip.background = element_rect(fill = "white")) +
+  labs(y = "", x = "Days below dissolved oxygen threshold", 
+       color = "Year") +
+    facet_wrap(~Threshold)
+
+ggsave(here(plotsave, 
+  "PlotH_days_below_DO_threshold_boxplot.png"),
+       width = 8,
+       height = 6, dpi = 400)
+```
+# 1.15. Plot I: Biplot of DO and temp thresholds
+```{r}
+both_count %>%
+  filter(summer_days.x >= 0.8, summer_days.y >= 0.8) %>%
+  filter(Threshold == "Trout Maintenance") %>%
+  group_by(site) %>%
+  summarise(days_over = mean(days_over),
+            days_under = mean(days_under),
+            .groups = "drop") %>%
+  mutate(mean_days = (days_under+days_over)/2,
+         num = gsub(site, pattern = "TNC_", 
+                    replacement = "")) %>%
+  ungroup() %>%
+  ggplot() +
+  geom_point(aes(y = days_under, x = days_over, fill = mean_days), 
+               shape = 21, size = 5) +
+  scale_fill_viridis_c() +
+  geom_text(aes(y = days_under, x = days_over, label = num),
+            color = "white", hjust = .5, size = 2.5) +
+  labs(y = "Days exceeding dissolved oxygen",
+       x = "Days exceeding temperature",
+       title = "Mean days exceeding 'Trout Maintenance' threshold") +
+  guides(fill = "none") +
+  scale_x_continuous(limits = c(0,110)) +
+  scale_y_continuous(limits = c(0,110)) +
+  scale_color_gradient(high = "firebrick",space = "Lab") +
+  theme_bw() +
+  theme(text = element_text(size = 14)) +
+  guides(color = "none")
+
+ggsave(here(plotsave,
+  "PlotI_days_exceeding_any_thresholds_scatterplot.png"),
+       width = 6,
+       height = 5, dpi = 400)
+```
+# 1.16. Plot J: "days exceeding either threshold" boxplots by site
+```{r}
+either_count %>%
+  filter(summer_days_temp >= 0.8, summer_days_DO >= 0.8) %>%
+  mutate(site = fct_reorder(as.factor(site), 
+                            days_exceeding, 
+                            .fun = "mean",
+                            .desc = T)) %>%
+  ggplot() +
+  geom_boxplot(aes(y = site, x = days_exceeding), 
+               outlier.color = "transparent",
+               color = "darkgray") +
+  geom_point(aes(y = site, x = days_exceeding, 
+                 color = as.factor(year)), size = 3, 
+             alpha =0.75, shape = 16) +
+  scale_color_manual(values = c(wes_palettes$Darjeeling1,
+                                wes_palettes$Darjeeling2)) +
+  theme_bw() +
+  theme(text = element_text(size = 14),
+        # legend.position = c(0.89,0.14),
+        legend.position = c(0.687,0.14),
+        legend.justification="left",
+        legend.margin=margin(2,2,2,2),
+        legend.box.margin=margin(0,0,0,0),
+        legend.key.size = unit(0.25, "cm"),
+        legend.background = element_rect(color = "darkgray"),
+        strip.background = element_rect(fill = "white")) +
+  labs(y = "", x = "Days exceeding any threshold (temperature or DO)", 
+       color = "Year") +
+    facet_wrap(~Threshold)
+
+ggsave(
+  "output/Task1_SWQS_loggers/PlotJ_days_exceeding_any_threshold_boxplot.png",
+       width = 8,
+       height = 6, dpi = 400) 
+```
+# 1.17. Model A: estimating proportion of summer days exceeding TM temperature standards
+Bayesian hierarchical model. Code adapted from the random effects binomial model described in Kery & Royle (2015) book: Applied Hierarchical Modeling. Includes Site x Year random effects. Note for adding new years: for each new year added, a new year matrix will need to be added to "jags_data" and the JAGS code edited accordingly (i.e., add a prior and a new year into the model formula).
+```{r}
+# format data for modeling
+tstat <- tmax %>%
+  # exclude 2 sites in the Delaware River
+  filter(site != "TNC_26",
+         site != "TNC_27") %>%
+  mutate(MAresid = max_temp - roll_temp,
+         TMex = case_when(max_temp > 25 ~ 1,
+                          roll_temp > 23 ~ 1,
+                          TRUE ~ 0),
+         day = day/100,
+         yearnum = year-2015,
+         yearf = as.factor(yearnum)) %>%
+  filter(summer == 1,
+         is.na(max_temp) == F) %>%
+  select(site, yearf, day, max_temp, TMex) %>%
+  droplevels()
+
+tstatJAGS <- tstat
+
+n_years <- length(unique(tstatJAGS$yearf))
+n_sites <- length(unique(tstatJAGS$site))
+TMex_mat <- matrix(data = NA, nrow = n_sites, ncol = n_years)
+TMex_n_mat <- matrix(data = NA, nrow = n_sites, ncol = n_years)
+yearf_mat <- matrix(data = rep(1:9, n_sites), nrow = n_sites, ncol = n_years, byrow = T)
+
+year1_mat <- matrix(data = c(rep(1,n_sites), 
+                             rep(0,length(TMex_mat)-n_sites)),
+                    ncol = n_years)
+year2_mat <- matrix(data = c(rep(0,n_sites), 
+                             rep(1,n_sites),
+                             rep(0,length(TMex_mat)-2*n_sites)),
+                    ncol = n_years)
+year3_mat <- matrix(data = c(rep(0,2*n_sites), 
+                             rep(1,n_sites), 
+                             rep(0,length(TMex_mat)-3*n_sites)),
+                    ncol = n_years)
+year4_mat <- matrix(data = c(rep(0,3*n_sites), 
+                             rep(1,n_sites), 
+                             rep(0,length(TMex_mat)-4*n_sites)),
+                    ncol = n_years)
+year5_mat <- matrix(data = c(rep(0,4*n_sites), 
+                             rep(1,n_sites), 
+                             rep(0,length(TMex_mat)-5*n_sites)),
+                    ncol = n_years)
+year6_mat <- matrix(data = c(rep(0,5*n_sites), 
+                             rep(1,n_sites),
+                             rep(0, length(TMex_mat)-6*n_sites)),
+                    ncol = n_years)
+year7_mat <- matrix(data = c(rep(0,6*n_sites), 
+                             rep(1,n_sites),
+                             rep(0, length(TMex_mat)-7*n_sites)),
+                    ncol = n_years)
+year8_mat <- matrix(data = c(rep(0,7*n_sites), 
+                             rep(1,n_sites),
+                             rep(0, length(TMex_mat)-8*n_sites)),
+                    ncol = n_years)
+
+for(i in 1:n_sites){
+  for(j in 1:n_years){
+    
+    value <- tstatJAGS %>%
+      filter(as.numeric(as.factor(site)) == i,
+             yearf == j)
+    TMex_mat[i, j] <- sum(value$TMex)
+    TMex_n_mat[i, j] <- length(value$TMex)
+  }
+  }
+
+jags_data <- list(n_total = nrow(tstatJAGS),
+                  n_years = length(unique(tstatJAGS$yearf)),
+                  n_sites = length(unique(tstatJAGS$site)),
+                  TMex = TMex_mat,
+                  TMex_n = TMex_n_mat,
+                  y1 = year1_mat,
+                  y2 = year2_mat,
+                  y3 = year3_mat,
+                  y4 = year4_mat,
+                  y5 = year5_mat,
+                  y6 = year6_mat,
+                  y7 = year7_mat,
+                  y8 = year8_mat,
+                  yearf = yearf_mat,
+                  day = tstatJAGS$day,
+                  year = as.numeric(tstatJAGS$yearf),
+                  site = as.numeric(as.factor(tstatJAGS$site)))
+
+cat(file = "scripts/AHM_mod2.txt","
+model {
+# Priors
+mu.alpha0.site <- logit(mean.theta) # Random intercepts
+mean.theta ~ dunif(0,1)
+tau.alpha0.site <- pow(sd.alpha0.site, -2)
+sd.alpha0.site ~ dunif(0, 10)
+mu.year.effect ~ dnorm(0, 0.001)
+tau.year.effect ~ dgamma(0.001, 0.001)
+tau.beta <- pow(sd.beta, -2)
+sd.beta ~ dunif(0, 10)
+
+for(j in 1:n_years){
+mu.beta[j] ~ dnorm(mu.year.effect, tau.year.effect)
+}
+
+# Likelihood
+for (i in 1:n_sites){
+
+alpha0.site[i] ~ dnorm(mu.alpha0.site, tau.alpha0.site) 
+beta1[i] ~ dnorm(mu.beta[1], tau.beta)
+beta2[i] ~ dnorm(mu.beta[2], tau.beta)
+beta3[i] ~ dnorm(mu.beta[3], tau.beta)
+beta4[i] ~ dnorm(mu.beta[4], tau.beta)
+beta5[i] ~ dnorm(mu.beta[5], tau.beta)
+beta6[i] ~ dnorm(mu.beta[6], tau.beta)
+
+for(j in 1:n_years){
+
+TMex[i,j] ~ dbin(theta[i,j], TMex_n[i,j])
+logit(theta[i,j]) <- alpha0.site[i] + beta1[i]*y1[i,2] +
+                        beta2[i]*y2[i,j] + beta3[i]*y3[i,j] +
+                      beta4[i]*y4[i,j] + beta5[i]*y5[i,j] +
+                      beta6[i]*y6[i,j]
+
+}
+}
+
+### derived 
+
+# annual river means
+for(j in 1:n_years){
+logit(river.mean[j]) <- mu.alpha0.site + mu.beta[j]
+}
+
+}")
+
+jags_mod <- jagsUI::jags(data = jags_data,
+             model.file = "scripts/AHM_mod2.txt",
+             n.iter = 80000, n.burnin = 20000,
+             parameters.to.save = c("theta", "alpha0.site",
+                                    "mu.alpha0.site",
+                                    "sd.alpha0.site",
+                                    "beta1", "beta2",
+                                    "beta3", "beta4",
+                                    "beta5", "beta6",
+                                    "mu.beta", "sd.beta",
+                                    "mu.year.effect",
+                                    "tau.year.effect",
+                                    "river.mean"),
+             n.chains = 3, parallel = T, n.thin = 120
+             )
+
+saveRDS(
+  jags_mod,
+        here(plotsave,
+               "statistical_analysis",
+               "hierarchical_model_output_files",
+               "ModelA_JAGS_TMtemp_model.rds")
+  )
+
+# jagsUI::traceplot(jags_mod)
+jags_mod
+```
+# 1.18. Plot K: estimated proportion of days exceeding TM temp standards by year and site
+Based on Model A. Note for adding new years: the section of code below "# manually add in site sample sizes for river mean" will need to be edited to reflect the sample size of the latest year. Alternatively, you could delete just this bit of code (including the comma):
+,
+         # manually add in site sample sizes for river mean
+         TMex_n = case_when(site == "River mean" &
+                              year %in% 2016:2017 ~ 10,
+                            site == "River mean" &
+                              year == 2018 ~ 12,
+                            site == "River mean" &
+                              year %in% 2019:2021 ~ 11,
+                            TRUE ~ TMex_n)
+        
+```{r}
+tstat <- tmax %>%
+  # exclude 2 sites in the Delaware River
+  filter(site != "TNC_26",
+         site != "TNC_27") %>%
+  mutate(MAresid = max_temp - roll_temp,
+         TMex = case_when(max_temp > 25 ~ 1,
+                          roll_temp > 23 ~ 1,
+                          TRUE ~ 0),
+         day = day/100,
+         yearnum = year-2015,
+         yearf = as.factor(yearnum)) %>%
+  filter(summer == 1,
+         is.na(max_temp) == F) %>%
+  select(site, yearf, day, max_temp, TMex) %>%
+  droplevels()
+
+maxyr <- max(as.numeric(tstat$yearf)+2015)
+
+# to read in the model results instead of running it
+jags_mod <- 
+  readRDS(here(plotsave,
+               "statistical_analysis",
+               "hierarchical_model_output_files",
+               "ModelA_JAGS_TMtemp_model.rds")
+  )
+
+mod_sum <- jags_mod$summary
+
+tstat_plot <- tstat %>%
+  group_by(site, yearf) %>%
+  summarise(TMex_sum = sum(TMex),
+            TMex_n = length(TMex),
+            TMex_p = TMex_sum/TMex_n) %>%
+  mutate(year = as.numeric(yearf)+2015) %>%
+  select(-yearf)
+
+river_modsum <- jags_mod$summary %>%
+  as.data.frame() %>%
+  select(mean, q2.5 = 3, q97.5 = 7) %>%
+  mutate(parameter = row.names(jags_mod$summary)) %>%
+  filter(grepl(parameter, pattern = "river")) %>%
+  mutate(site = "River mean",
+         year = 2016:maxyr,
+         TMex_sum = NaN,
+         TMex_n = NaN,
+         TMex_p = NaN)
+
+numsites <- length(unique(tstat$site))
+numyr <- length(2016:maxyr)
+
+modsum <- jags_mod$summary %>%
+  as.data.frame() %>%
+  select(mean, q2.5 = 3, q97.5 = 7) %>%
+  mutate(parameter = row.names(jags_mod$summary)) %>%
+  filter(grepl(parameter, pattern = "theta")) %>%
+  mutate(site = rep(unique(tstat$site), numyr),
+         year = sort(rep(2016:maxyr, numsites))) %>%
+  left_join(tstat_plot) %>%
+  filter(is.na(TMex_n)==F) %>%
+  bind_rows(river_modsum) %>%
+  mutate(site = as.character(site)) %>%
+  mutate(site = case_when(is.na(site) == T ~ "River mean",
+                          TRUE ~ site),
+         order = substr(site, 5, 6)) %>%
+  mutate(order = case_when(order == "r " ~ 85,
+                           TRUE ~ as.numeric(order)),
+         site = fct_reorder(site, .x = order),
+         # manually add in site sample sizes for river mean
+         TMex_n = case_when(site == "River mean" &
+                              year %in% 2016:2017 ~ 10,
+                            site == "River mean" &
+                              year == 2018 ~ 12,
+                            site == "River mean" &
+                              year %in% 2019:2021 ~ 11,
+                            TRUE ~ TMex_n))
+
+# used to count number of sites in each year
+modsum %>%
+  filter(is.na(TMex_p)==F) %>%
+  group_by(year) %>%
+  tally()
+
+ggplot(modsum) +
+  geom_errorbar(aes(x = year, ymin = q2.5, ymax = q97.5),
+                width = 0, color = "steelblue") +
+  geom_point(aes(x = year, y = mean), color = "steelblue",
+             size = 1.5) +
+  geom_text(aes(x = year, y = -0.1,
+                label = TMex_n),
+            color = "darkgray", size = 1.5) +
+  facet_wrap(~site) +
+  theme_bw() +
+  theme(text = element_text(size = 14),
+        axis.text.x = element_text(size = 6),
+        axis.title.y = element_text(size = 10),
+        strip.background = element_rect(fill = "white")) +
+  scale_y_continuous(limits = c(-0.2,1),
+                     breaks = seq(0,1,by = .5)) +
+  labs(y = "Proportion of days exceeding \nTrout Maintenance temperature standards (Jun-Aug)",x = "")
+
+ggsave(here(plotsave, 
+            "PlotK_temp_TM_exceed_hierarchical_model_trends.png"), 
+            width = 7, height = 5, dpi = 400)
+```
+# 1.19. Model B: estimating proportion of summer days exceeding TM DO standards
+Random effects binomial model from Kery & Royle AHM book. Site x Year random effects. Note for adding new years: See notes in section 1.17. 
+```{r}
+dostat <- dmin %>%
+  # exclude 2 sites in the Delaware River
+  filter(site != "TNC_26",
+         site != "TNC_27") %>%
+  mutate(TMexDO = case_when(min_DO < 5 ~ 1,
+                            mean24_DO < 6 ~ 1,
+                            TRUE ~ 0),
+         yearnum = year-2015,
+         yearf = as.factor(yearnum)) %>%
+  filter(summer == 1,
+         is.na(min_DO) == F) %>%
+  select(site, yearf, day, min_DO, TMexDO) %>%
+  droplevels()
+
+dostatJAGS <- dostat
+
+n_years <- length(unique(dostatJAGS$yearf))
+n_sites <- length(unique(dostatJAGS$site))
+TMexDO_mat <- matrix(data = NA, nrow = n_sites, ncol = n_years)
+TMexDO_n_mat <- matrix(data = NA, nrow = n_sites, ncol = n_years)
+yearf_mat <- matrix(data = rep(1:9, n_sites), nrow = n_sites, ncol = n_years, byrow = T)
+
+year1_mat <- matrix(data = c(rep(1,n_sites), 
+                             rep(0,length(TMexDO_mat)-n_sites)),
+                    ncol = n_years)
+year2_mat <- matrix(data = c(rep(0,n_sites), 
+                             rep(1,n_sites),
+                             rep(0,length(TMexDO_mat)-2*n_sites)),
+                    ncol = n_years)
+year3_mat <- matrix(data = c(rep(0,2*n_sites), 
+                             rep(1,n_sites), 
+                             rep(0,length(TMexDO_mat)-3*n_sites)),
+                    ncol = n_years)
+year4_mat <- matrix(data = c(rep(0,3*n_sites), 
+                             rep(1,n_sites), 
+                             rep(0,length(TMexDO_mat)-4*n_sites)),
+                    ncol = n_years)
+year5_mat <- matrix(data = c(rep(0,4*n_sites), 
+                             rep(1,n_sites), 
+                             rep(0,length(TMexDO_mat)-5*n_sites)),
+                    ncol = n_years)
+year6_mat <- matrix(data = c(rep(0,5*n_sites), 
+                             rep(1,n_sites),
+                             rep(0,length(TMexDO_mat)-6*n_sites)),
+                    ncol = n_years)
+year7_mat <- matrix(data = c(rep(0,6*n_sites), 
+                             rep(1,n_sites),
+                             rep(0,length(TMexDO_mat)-7*n_sites)),
+                    ncol = n_years)
+year8_mat <- matrix(data = c(rep(0,7*n_sites), 
+                             rep(1,n_sites),
+                             rep(0,length(TMexDO_mat)-8*n_sites)),
+                    ncol = n_years)
+
+for(i in 1:n_sites){
+  for(j in 1:n_years){
+    
+    value <- dostatJAGS %>%
+      filter(as.numeric(as.factor(site)) == i,
+             yearf == j)
+    TMexDO_mat[i, j] <- sum(value$TMexDO)
+    TMexDO_n_mat[i, j] <- length(value$TMexDO)
+  }
+  }
+
+jags_data_DO <- list(n_total = nrow(dostatJAGS),
+                  n_years = length(unique(dostatJAGS$yearf)),
+                  n_sites = length(unique(dostatJAGS$site)),
+                  TMex = TMexDO_mat,
+                  TMex_n = TMexDO_n_mat,
+                  y1 = year1_mat,
+                  y2 = year2_mat,
+                  y3 = year3_mat,
+                  y4 = year4_mat,
+                  y5 = year5_mat,
+                  y6 = year6_mat,
+                  y7 = year7_mat, 
+                  y8 = year8_mat,
+                  yearf = yearf_mat,
+                  day = dostatJAGS$day,
+                  year = as.numeric(dostatJAGS$yearf),
+                  site = as.numeric(as.factor(dostatJAGS$site)))
+
+jags_mod_DO <- jagsUI::jags(data = jags_data_DO,
+             model.file = "scripts/AHM_mod2.txt",
+             n.iter = 80000, n.burnin = 20000,
+             parameters.to.save = c("theta", "alpha0.site",
+                                    "mu.alpha0.site",
+                                    "sd.alpha0.site",
+                                    "beta1", "beta2",
+                                    "beta3", "beta4",
+                                    "beta5", "beta6",
+                                    "mu.beta", "sd.beta",
+                                    "mu.year.effect",
+                                    "tau.year.effect",
+                                    "river.mean"),
+             n.chains = 3, parallel = T, n.thin = 120
+             )
+
+saveRDS(jags_mod_DO,
+        here(plotsave,
+             "statistical_analysis",
+             "hierarchical_model_output_files",
+             "ModelB_JAGS_TM_DO_model.rds")
+  )
+
+# jagsUI::traceplot(jags_mod_DO)
+jags_mod_DO
+```
+# 1.20. Plot L: estimated proportion of days exceeding TM DO standards by year and site
+Based on Model B. Note for adding new years: see note for section 1.18.
+```{r}
+dostat <- dmin %>%
+  # exclude 2 sites in the Delaware River
+  filter(site != "TNC_26",
+         site != "TNC_27") %>%
+  mutate(TMexDO = case_when(min_DO < 5 ~ 1,
+                            mean24_DO < 6 ~ 1,
+                            TRUE ~ 0),
+         yearnum = year-2015,
+         yearf = as.factor(yearnum)) %>%
+  filter(summer == 1,
+         is.na(min_DO) == F) %>%
+  select(site, yearf, day, min_DO, TMexDO) %>%
+  droplevels()
+
+maxyr <- max(as.numeric(dostat$yearf)+2015)
+
+n_years <- length(unique(dostat$yearf))
+n_sites <- length(unique(dostat$site))
+
+# to read in the model results instead of running it
+jags_mod_DO <- 
+  readRDS(here(plotsave,
+             "statistical_analysis",
+             "hierarchical_model_output_files",
+             "ModelB_JAGS_TM_DO_model.rds")
+          )
+
+
+modDO_sum <- jags_mod_DO$summary
+
+dostat_plot <- dostat %>%
+  group_by(site, yearf) %>%
+  summarise(TMex_sum = sum(TMexDO),
+            TMex_n = length(TMexDO),
+            TMex_p = TMex_sum/TMex_n) %>%
+  mutate(year = as.numeric(yearf)+2015) %>%
+  select(-yearf)
+
+river_modDOsum <- jags_mod_DO$summary %>%
+  as.data.frame() %>%
+  select(mean, q2.5 = 3, q97.5 = 7) %>%
+  mutate(parameter = row.names(jags_mod_DO$summary)) %>%
+  filter(grepl(parameter, pattern = "river")) %>%
+  mutate(site = "River mean",
+         year = 2016:maxyr,
+         TMex_sum = NaN,
+         TMex_n = NaN,
+         TMex_p = NaN)
+
+modDOsum <- jags_mod_DO$summary %>%
+  as.data.frame() %>%
+  select(mean, q2.5 = 3, q97.5 = 7) %>%
+  mutate(parameter = row.names(jags_mod_DO$summary)) %>%
+  filter(grepl(parameter, pattern = "theta")) %>%
+  mutate(site = rep(unique(dostat$site), n_years),
+         year = sort(rep(2016:maxyr, n_sites))) %>%
+  left_join(dostat_plot) %>%
+  filter(is.na(TMex_n)==F) %>%
+  bind_rows(river_modDOsum) %>%
+  mutate(site = as.character(site)) %>%
+  mutate(site = case_when(is.na(site) == T ~ "River mean",
+                          TRUE ~ site),
+         order = substr(site, 5, 6)) %>%
+  mutate(order = case_when(order == "r " ~ 85,
+                           TRUE ~ as.numeric(order)),
+         site = fct_reorder(site, .x = order),
+         # manually add in site sample sizes for river mean
+         TMex_n = case_when(site == "River mean" &
+                              year %in% 2016:2017 ~ 10,
+                            site == "River mean" &
+                              year == 2018 ~ 12,
+                            site == "River mean" &
+                              year %in% 2019:2021 ~ 11,
+                            TRUE ~ TMex_n))
+
+# used to count number of sites in each year
+modDOsum %>%
+  filter(is.na(TMex_p)==F) %>%
+  group_by(year) %>%
+  tally()
+
+ggplot(modDOsum) +
+  geom_errorbar(aes(x = year, ymin = q2.5, ymax = q97.5),
+                width = 0, color = "firebrick") +
+  geom_point(aes(x = year, y = mean), color = "firebrick",
+             size = 1.5) +
+  geom_text(aes(x = year, y = -0.1, 
+                label = TMex_n),
+            color = "darkgray", size = 1.5) +
+  facet_wrap(~site) +
+  theme_bw() +
+  theme(text = element_text(size = 14),
+        axis.text.x = element_text(size = 6),
+        axis.title.y = element_text(size = 10),
+        strip.background = element_rect(fill = "white")) +
+  scale_y_continuous(limits = c(-0.2,1),
+                     breaks = seq(0,1,by = .5)) +
+  labs(y = "Proportion of days exceeding \nTrout Maintenance dissolved oxygen standards (Jun-Aug)",x = "")
+
+ggsave(here(plotsave,
+            "PlotL_DO_TM_exceed_hierarchical_model_trends.png"), 
+       width = 7, height = 5, dpi = 400)
+```
+# 1.21. Plot M: estimated proportion of days exceeding TM temp standards by site, standardizing to 2018 conditions
+Based on Model A.
+```{r}
+# to read in the model results instead of running it
+jags_mod <- 
+  readRDS(here(plotsave,
+               "statistical_analysis",
+               "hierarchical_model_output_files",
+               "ModelA_JAGS_TMtemp_model.rds")
+  )
+
+y18 <- jags_mod$summary %>%
+  as.data.frame() %>%
+  select(mean, q2.5 = 3, q97.5 = 7) %>%
+  mutate(parameter = row.names(jags_mod$summary)) %>%
+  filter(grepl(parameter, pattern = ",3]")) %>%
+  mutate(site = unique(tstat$site)) %>%
+  mutate(site = fct_reorder(site, mean))
+  
+y18 %>%
+  ggplot() +
+  geom_errorbar(aes(x = site, 
+                    ymin = q2.5, 
+                    ymax = q97.5), 
+                width = 0, size = .75,
+                color = "steelblue") +
+  geom_point(aes(x = site, y = mean), 
+             size = 4, color = "steelblue") +
+  coord_flip() +
+  labs(y = "Predicted proportion of days (Jun-Aug) exceeding \nTrout Maintenance temperature thresholds \n(standardized to 2018 conditions)", x = "") +
+  theme_bw() +
+  theme(text = element_text(size = 14))
+
+ggsave(here(plotsave,
+            "PlotM_temp_TM_exceed_hierarchical_model_standardized_site_comparisons.png"), 
+            width = 6, height = 7, dpi = 400)
+```
+# 1.22. Table E: hierarchical model results - temperature
+Estimated proabability of summer days exceeding Trout Maintenance temperature thresholds. Based on Model A.
+```{r}
+tstat <- tmax %>%
+  # exclude 2 sites in the Delaware River
+  filter(site != "TNC_26",
+         site != "TNC_27") %>%
+  mutate(MAresid = max_temp - roll_temp,
+         TMex = case_when(max_temp > 25 ~ 1,
+                          roll_temp > 23 ~ 1,
+                          TRUE ~ 0),
+         day = day/100,
+         yearnum = year-2015,
+         yearf = as.factor(yearnum)) %>%
+  filter(summer == 1,
+         is.na(max_temp) == F) %>%
+  select(site, yearf, day, max_temp, TMex) %>%
+  droplevels()
+
+# to read in the model results instead of running it
+jags_mod <- 
+  readRDS(here(plotsave,
+               "statistical_analysis",
+               "hierarchical_model_output_files",
+               "ModelA_JAGS_TMtemp_model.rds")
+  )
+
+mod_sum <- jags_mod$summary
+
+tstat_plot <- tstat %>%
+  group_by(site, yearf) %>%
+  summarise(TMex_sum = sum(TMex),
+            TMex_n = length(TMex),
+            TMex_p = TMex_sum/TMex_n) %>%
+  mutate(year = as.numeric(yearf)+2015) %>%
+  select(-yearf)
+
+maxyr <- max(tstat_plot$year)
+
+river_modsum <- jags_mod$summary %>%
+  as.data.frame() %>%
+  select(mean, q2.5 = 3, q97.5 = 7) %>%
+  mutate(parameter = row.names(jags_mod$summary)) %>%
+  filter(grepl(parameter, pattern = "river")) %>%
+  mutate(site = "River mean",
+         year = 2016:maxyr,
+         TMex_sum = NaN,
+         TMex_n = NaN,
+         TMex_p = NaN)
+
+numsites <- length(unique(tstat$site))
+
+modsum <- jags_mod$summary %>%
+  as.data.frame() %>%
+  select(mean, q2.5 = 3, q97.5 = 7) %>%
+  mutate(parameter = row.names(jags_mod$summary)) %>%
+  filter(grepl(parameter, pattern = "theta")) %>%
+  mutate(site = rep(unique(tstat$site), 9),
+         year = sort(rep(2016:maxyr, numsites))) %>%
+  left_join(tstat_plot) %>%
+  filter(is.na(TMex_n)==F) %>%
+  bind_rows(river_modsum) %>%
+  mutate(site = as.character(site)) %>%
+  mutate(site = case_when(is.na(site) == T ~ "River mean",
+                          TRUE ~ site),
+         order = substr(site, 5, 6)) %>%
+  mutate(order = case_when(order == "r " ~ 85,
+                           TRUE ~ as.numeric(order)),
+         site = fct_reorder(site, .x = order))
+
+model_table_temp <- modsum %>% 
+  arrange(site, year) %>%
+  select(site, year, TMex_sum, TMex_n, mean, q2.5, q97.5) %>%
+  filter(site != "River mean") %>%
+  rename(Site = site, Year = year, 'No. days' = TMex_sum, 
+         n = TMex_n, 'Est. prob.' = mean, LL = q2.5, UL = q97.5) %>%
+  kbl(digits = 2, caption = "Summer days exceeding Trout Maintenance temperature thresholds (Jun-Aug). Estimated probability of exceeding the threshold (with 95% credible intervals) was estimated using a Bayesian hierarchical model.", row.names = F) %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+model_table_temp
+
+# save the table to HTML file
+save_kable(model_table_temp,
+           here(plotsave, "TableE_modeled_p_TM_temp.html")
+)
+```
+# 1.23. Table F: hierarchical model results - DO
+Estimated probability of summer days exceeding Trout Maintenance DO thresholds. Based on Model B.
+```{r}
+dostat <- dmin %>%
+  # exclude 2 sites in the Delaware River
+  filter(site != "TNC_26",
+         site != "TNC_27") %>%
+  mutate(TMexDO = case_when(min_DO < 5 ~ 1,
+                            mean24_DO < 6 ~ 1,
+                            TRUE ~ 0),
+         yearnum = year-2015,
+         yearf = as.factor(yearnum)) %>%
+  filter(summer == 1,
+         is.na(min_DO) == F) %>%
+  select(site, yearf, day, min_DO, TMexDO) %>%
+  droplevels()
+
+n_years <- length(unique(dostat$yearf))
+n_sites <- length(unique(dostat$site))
+
+# to read in the model results instead of running it
+jags_mod_DO <- 
+  readRDS(here(plotsave,
+             "statistical_analysis",
+             "hierarchical_model_output_files",
+             "ModelB_JAGS_TM_DO_model.rds")
+          )
+
+
+modDO_sum <- jags_mod_DO$summary
+
+dostat_plot <- dostat %>%
+  group_by(site, yearf) %>%
+  summarise(TMex_sum = sum(TMexDO),
+            TMex_n = length(TMexDO),
+            TMex_p = TMex_sum/TMex_n) %>%
+  mutate(year = as.numeric(yearf)+2015) %>%
+  select(-yearf)
+
+maxyr <- max(dostat_plot$year)
+
+river_modDOsum <- jags_mod_DO$summary %>%
+  as.data.frame() %>%
+  select(mean, q2.5 = 3, q97.5 = 7) %>%
+  mutate(parameter = row.names(jags_mod_DO$summary)) %>%
+  filter(grepl(parameter, pattern = "river")) %>%
+  mutate(site = "River mean",
+         year = 2016:maxyr,
+         TMex_sum = NaN,
+         TMex_n = NaN,
+         TMex_p = NaN)
+
+modDOsum <- jags_mod_DO$summary %>%
+  as.data.frame() %>%
+  select(mean, q2.5 = 3, q97.5 = 7) %>%
+  mutate(parameter = row.names(jags_mod_DO$summary)) %>%
+  filter(grepl(parameter, pattern = "theta")) %>%
+  mutate(site = rep(unique(dostat$site), n_years),
+         year = sort(rep(2016:maxyr, n_sites))) %>%
+  left_join(dostat_plot) %>%
+  filter(is.na(TMex_n)==F) %>%
+  bind_rows(river_modDOsum) %>%
+  mutate(site = as.character(site)) %>%
+  mutate(site = case_when(is.na(site) == T ~ "River mean",
+                          TRUE ~ site),
+         order = substr(site, 5, 6)) %>%
+  mutate(order = case_when(order == "r " ~ 85,
+                           TRUE ~ as.numeric(order)),
+         site = fct_reorder(site, .x = order))
+
+model_table_DO <- modDOsum %>% 
+  arrange(site, year) %>%
+  select(site, year, TMex_sum, TMex_n, mean, q2.5, q97.5) %>%
+  filter(site != "River mean") %>%
+  rename(Site = site, Year = year, 'No. days' = TMex_sum, 
+         n = TMex_n, 'Est. prob.' = mean, LL = q2.5, UL = q97.5) %>%
+  kbl(digits = 2, caption = "Summer days exceeding Trout Maintenance dissolved oxygen thresholds (Jun-Aug). Estimated probability of exceeding the threshold (with 95% credible intervals) was estimated using a Bayesian hierarchical model.", row.names = F) %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+model_table_DO
+
+# save the table to HTML file
+save_kable(model_table_DO,
+           here(plotsave, 
+                "TableF_modeled_p_TM_DO.html")
+)
+```
+# 1.24. Model C: Fit Generalized Additive Model to temperature data
+```{r}
+# load library for fitting GAMs
+library(mgcv)
+
+# GAM by year with site as a covariate
+tmax_gam <- tmax %>%
+  # exclude 2 sites in the Delaware River
+  filter(site != "TNC_26",
+         site != "TNC_27") %>%
+  mutate(yearf = as.factor(year)) %>%
+  filter(is.na(max_temp)==F,
+         day %in% 91:288) %>%
+  arrange(site, year, day)
+
+gam_1 <- gam(max_temp ~ s(day, by = yearf) + site,
+             data = tmax_gam,
+             family = gaussian)
+sink(paste0("output/Task1_SWQS_loggers/",
+              "statistical_analysis/ModelC_GAM_results_temp.txt"))
+summary(gam_1)
+sink()
+
+summary(gam_1)
+
+saveRDS(gam_1, here(plotsave, 
+                    "statistical_analysis",
+                    "ModelC_GAM_results_temp.rds"))
+
+```
+# 1.25. Plot N: GAM predicted temperature values from July 15th
+Based on Model C.
+```{r}
+gam_1 <- readRDS(here(plotsave,
+     "statistical_analysis",
+                    "ModelC_GAM_results_temp.rds"))
+
+maxyr <- max(temp_count$year)
+
+tmax_jul15 <- data.frame(
+  expand.grid(site = gam_1$xlevels$site, 
+                                   yearf = 2016:maxyr, 
+                                   day = 196),
+  meanTmax = predict(gam_1, 
+                     newdata = 
+                       expand.grid(site = gam_1$xlevels$site, 
+                                   yearf = 2016:maxyr, 
+                                   day = 196), se.fit = T)[[1]],
+  seTmax = predict(gam_1, 
+                     newdata = 
+                       expand.grid(site = gam_1$xlevels$site, 
+                                   yearf = 2016:maxyr, 
+                                   day = 196), se.fit = T)[[2]]) %>%
+  mutate(site = fct_reorder(site, meanTmax))
+
+tmax_jul15
+
+tmax_jul15 %>%
+  ggplot() +
+  geom_errorbar(aes(y = site, xmax = meanTmax+2*seTmax,
+                    xmin = meanTmax-2*seTmax),
+                width = 0, color = "dodgerblue") + 
+  geom_point(aes(y = site, x = meanTmax),
+             color = "dodgerblue") +  
+  # geom_hline(aes(yintercept = ))
+  facet_wrap(~as.factor(yearf)) +
+  theme_bw() +
+  theme(text = element_text(size = 14),
+        strip.background = element_rect(fill = "white"),
+        axis.text.y = element_text(size = 10)) +
+  labs(x = "Predicted mean maximum temperature on July 15th", 
+       y = "",
+       title = "Generalized Additive Model (GAM) results") +
+  scale_x_continuous(breaks = c(20, 22, 24, 26, 28))
+
+ggsave(
+  here(plotsave,
+       "PlotN_temp_GAM_standardized_site_comparisons.png"),
+         width = 7, height = 7, dpi = 400)
+```
+# 1.26. Model D: Fit Generalized Additive Model to DO data
+```{r}
+# load library to fit GAMs
+library(mgcv)
+
+# GAM by year with site as a covariate
+dmin_gam <- dmin %>%
+  # exclude 2 sites in the Delaware River
+  filter(site != "TNC_26",
+         site != "TNC_27") %>%
+  mutate(yearf = as.factor(year)) %>%
+  filter(is.na(min_DO)==F,
+         day %in% 91:288) %>%
+  arrange(site, year, day)
+
+gam_2 <- gam(min_DO ~ s(day, by = yearf) + site,
+             data = dmin_gam,
+             family = gaussian)
+
+sink(paste0(plotsave,
+              "statistical_analysis/ModelD_GAM_results_DO.txt"))
+summary(gam_2)
+sink()
+
+summary(gam_2)
+
+saveRDS(gam_2, here(plotsave, 
+                    "statistical_analysis",
+                    "ModelD_GAM_results_DO.rds"))
+
+```
+# 1.27. Plot O: GAM predicted dissolved oxygen values from July 15th
+```{r}
+gam_2 <- readRDS(here(plotsave,
+     "statistical_analysis",
+                    "ModelD_GAM_results_DO.rds"))
+
+maxyr <- max(DO_count$year)
+
+dmin_jul15 <- data.frame(
+  expand.grid(site = gam_2$xlevels$site, 
+                                   yearf = 2016:maxyr, 
+                                   day = 196),
+  meandmin = predict(gam_2, 
+                     newdata = 
+                       expand.grid(site = gam_2$xlevels$site, 
+                                   yearf = 2016:maxyr, 
+                                   day = 196), se.fit = T)[[1]],
+  sedmin = predict(gam_2, 
+                     newdata = 
+                       expand.grid(site = gam_2$xlevels$site, 
+                                   yearf = 2016:maxyr, 
+                                   day = 196), se.fit = T)[[2]]) %>%
+  mutate(site = fct_reorder(site, meandmin))
+
+dmin_jul15
+
+dmin_jul15 %>%
+  ggplot() +
+  geom_errorbar(aes(y = site, xmax = meandmin+2*sedmin,
+                    xmin = meandmin-2*sedmin),
+                width = 0, color = "dodgerblue") + 
+  geom_point(aes(y = site, x = meandmin),
+             color = "dodgerblue") +  
+  facet_wrap(~as.factor(yearf)) +
+  theme_bw() +
+  theme(text = element_text(size = 14),
+        strip.background = element_rect(fill = "white"),
+        axis.text.y = element_text(size = 10)) +
+  labs(x = "Predicted mean minimum dissolved oxygen on July 15th", 
+       y = "",
+       title = "Generalized Additive Model (GAM) results") +
+  scale_x_continuous(breaks = 2:8)
+
+ggsave(
+  here(plotsave, 
+       "PlotO_DO_GAM_standardized_site_comparisons.png"),
+         width = 7, height = 7, dpi = 400)
+```
+# 1.28. Plot P: Bivariate GAM temp vs. DO
+Predict DO and max temperature on July 15, 2018
+```{r}
+
+# Load and format the temperature GAM results
+
+gam_1 <- readRDS(here(plotsave,
+     "statistical_analysis",
+                    "ModelC_GAM_results_temp.rds"))
+
+maxyr <- max(temp_count$year)
+
+tmax_jul15 <- data.frame(
+  expand.grid(site = gam_1$xlevels$site, 
+                                   yearf = 2016:maxyr, 
+                                   day = 196),
+  meanTmax = predict(gam_1, 
+                     newdata = 
+                       expand.grid(site = gam_1$xlevels$site, 
+                                   yearf = 2016:maxyr, 
+                                   day = 196), se.fit = T)[[1]],
+  seTmax = predict(gam_1, 
+                     newdata = 
+                       expand.grid(site = gam_1$xlevels$site, 
+                                   yearf = 2016:maxyr, 
+                                   day = 196), se.fit = T)[[2]]) %>%
+  mutate(site = fct_reorder(site, meanTmax))
+
+# Load and format the DO GAM results
+
+gam_2 <- readRDS(here(plotsave,
+     "statistical_analysis",
+                    "ModelD_GAM_results_DO.rds"))
+
+dmin_jul15 <- data.frame(
+  expand.grid(site = gam_2$xlevels$site, 
+                                   yearf = 2016:maxyr, 
+                                   day = 196),
+  meandmin = predict(gam_2, 
+                     newdata = 
+                       expand.grid(site = gam_2$xlevels$site, 
+                                   yearf = 2016:maxyr, 
+                                   day = 196), se.fit = T)[[1]],
+  sedmin = predict(gam_2, 
+                     newdata = 
+                       expand.grid(site = gam_2$xlevels$site, 
+                                   yearf = 2016:maxyr, 
+                                   day = 196), se.fit = T)[[2]]) %>%
+  mutate(site = fct_reorder(site, meandmin))
+
+dmin_jul15 %>%
+  left_join(tmax_jul15) %>%
+  filter(yearf == 2018) %>%
+  mutate(num = gsub(site, pattern = "TNC_", 
+                    replacement = "")) %>%
+  ggplot() +
+  geom_errorbar(aes(xmin = meanTmax-2*seTmax, 
+                    xmax = meanTmax+2*seTmax, y = meandmin)) +
+  geom_errorbar(aes(ymin = meandmin-2*sedmin, 
+                    ymax = meandmin+2*sedmin, x = meanTmax)) +
+  geom_point(aes(y = meandmin, x = meanTmax),
+             size = 5, fill = "steelblue",
+             shape = 21) +
+  geom_text(aes(y = meandmin, x = meanTmax, label = num),
+            color = "white", hjust = .5, size = 2.5) +
+  theme_bw() +
+  theme(text = element_text(size = 14)) +
+  labs(x = "Predicted mean maximum temp. (C)",
+       y = "Predicted mean minimum DO")
+
+ggsave(
+  here(plotsave,
+       "PlotP_DO_and_temp_GAM_standardized_site_comparisons.png"),
+         width = 5, height = 5, dpi = 400)
+
+```
+# 1.29. Plot Q: Plots of temperature over time for each site (panels by year)
+```{r}
+site_name_vector = unique(tmax$site)
+# plot daily max vs. thresholds
+
+for(site_name in site_name_vector){
+
+print(paste0("Making site ", site_name))
+# for testing
+#x11(height = 7, width = 9)
+  
+max_col = "dodgerblue"
+roll_col = "red"
+
+tmax %>%
+  filter(site == site_name) %>%
+  ggplot() +
+  geom_hline(
+    yintercept = 22,
+    color = max_col,
+    lty = 3,
+    size = .5,
+    alpha = 0.5
+  ) +
+  geom_hline(
+    yintercept = 25,
+    color = max_col,
+    lty = 2,
+    size = .5,
+    alpha = 0.5
+  ) +
+  geom_hline(
+    yintercept = 31,
+    color = max_col,
+    lty = 1,
+    size = .5,
+    alpha = 0.5
+  ) +
+  geom_hline(
+    yintercept = 19,
+    color = roll_col,
+    lty = 3,
+    size = .5,
+    alpha = 0.5
+  ) +
+  geom_hline(
+    yintercept = 23,
+    color = roll_col,
+    lty = 2,
+    size = .5,
+    alpha = 0.5
+  ) +
+  geom_hline(
+    yintercept = 28,
+    color = roll_col,
+    lty = 1,
+    size = .5,
+    alpha = 0.5
+  ) +
+  geom_line(aes(x = day, y = max_temp),
+            size = 1, alpha = 0.75, color = max_col) +
+  geom_line(aes(x = day, y = roll_temp),
+            size = 0.5, alpha = 0.75, color = roll_col) +
+  facet_wrap( ~ year) +
+  scale_x_continuous(
+    breaks = c(91, 152, 213, 274, 335),
+    labels = c("Apr", "Jun", "Aug",
+               "Oct", "Dec")
+  ) +
+  scale_y_continuous(limits = c(0,32)) +
+  cowplot::theme_cowplot() +
+  theme(
+    strip.background = element_rect(fill = "white")
+  ) +
+  labs(y = "Daily maximum temperature (C)", x = "",
+       color = "Year", title = paste0("Site: ",site_name)) +
+  annotate("text", x = 335, y = 30, label = "NT", 
+           color = "darkgray", size = 2) +
+  annotate("text", x = 335, y = 24, label = "TM", 
+           color = "darkgray", size = 2) +
+  annotate("text", x = 335, y = 21, label = "TP", 
+           color = "darkgray", size = 2)
+
+num_panels <- length(unique((tmax %>% 
+                               filter(site == site_name))$year))
+{
+ggsave(paste0(plotsave, "PlotQ_individual_sites_temperature/", site_name, "_tmax_by_day_year.png"),
+       height = 6, width = 9, dpi = 400)
+  }
+
+}
+
+```
+# 1.30. Plot R: Plots of DO over time for each site (panels by year)
+```{r}
+site_name_vector = unique(dmin$site)
+# plot daily max vs. thresholds
+
+for(site_name in site_name_vector){
+
+print(paste0("Making site ", site_name))
+# for testing
+#x11(height = 7, width = 9)
+  
+max_col = "dodgerblue"
+roll_col = "red"
+
+dmin %>%
+  filter(site == site_name) %>%
+  ggplot() +
+    geom_hline(
+    yintercept = 7,
+    color = max_col,
+    lty = 3,
+    size = .5,
+    alpha = 0.5
+  ) +
+  geom_hline(
+    yintercept = 5,
+    color = max_col,
+    lty = 2,
+    size = .5,
+    alpha = 0.5
+  ) +
+  geom_hline(
+    yintercept = 4,
+    color = max_col,
+    lty = 1,
+    size = .5,
+    alpha = 0.5
+  ) +
+  geom_hline(
+    yintercept = 6,
+    color = roll_col,
+    lty = 2,
+    size = .5,
+    alpha = 0.5
+  ) +
+  geom_hline(
+    yintercept = 5,
+    color = roll_col,
+    lty = 1,
+    size = .5,
+    alpha = 0.5
+  ) +
+  geom_line(aes(x = day, y = min_DO),
+            size = 1, alpha = 0.75, color = max_col) +
+  geom_line(aes(x = day, y = mean24_DO),
+            size = 0.5, alpha = 0.75, color = roll_col) +
+  facet_wrap( ~ year) +
+  scale_x_continuous(
+    breaks = c(91, 152, 213, 274, 335),
+    labels = c("Apr", "Jun", "Aug",
+               "Oct", "Dec")
+  ) +
+  scale_y_continuous(limits = c(0,14.5)) +
+  cowplot::theme_cowplot() +
+  theme(
+    strip.background = element_rect(fill = "white")
+  ) +
+  labs(y = "Dissolved oxygen", x = "",
+       color = "Year", title = paste0("Site: ",site_name)) +
+  annotate("text", x = 335, y = 4.5, label = "NT", 
+           color = "darkgray", size = 2) +
+  annotate("text", x = 335, y = 5.5, label = "TM", 
+           color = "darkgray", size = 2) +
+  annotate("text", x = 335, y = 7.5, label = "TP", 
+           color = "darkgray", size = 2)
+
+num_panels <- length(unique((tmax %>% 
+                               filter(site == site_name))$year))
+{
+ggsave(paste0(plotsave, "PlotR_individual_sites_DO/", site_name, "_DO_by_day_year.png"),
+       height = 5, width = 8, dpi = 400)
+  }
+
+}
+
+```
+# 1.31. Plot S: results from mean temperature GAMs by year
+Results of Model C
+```{r}
+gam_1 <- readRDS(here(plotsave,
+     "statistical_analysis",
+                    "ModelC_GAM_results_temp.rds"))
+
+maxyr <- max(temp_count$year)
+
+temp2 <- cbind(tmax_gam, fit = gam_1$fitted.values)
+for(the_year in c(2016:maxyr)){
+  print(the_year)
+  temp2 %>% filter(yearf == the_year) %>%
+  ggplot() +
+  geom_vline(xintercept = 196, lty = 2, color = "darkgray") +  
+  geom_point(aes(x = day, y = max_temp), color = "darkgray") +
+  geom_line(aes(x = day, y = fit), color = "salmon") +
+
+  facet_wrap(~site) +
+  theme_bw() +
+  labs(x = "", y = "Daily maximum temperature (C)",
+       title = paste0("GAM results: ", the_year)) +
+  theme(text = element_text(size = 14),
+        axis.text.x = element_text(size = 9),
+        strip.background = element_rect(fill = "white")) + 
+  scale_x_continuous(
+    breaks = c(91, 152, 213, 274, 335),
+    labels = c("Apr", "Jun", "Aug",
+               "Oct", "Dec")
+  )
+
+ggsave(paste0(plotsave,
+              "PlotS_GAM_temp/GAM_plots_",
+              the_year, ".png"),
+       height = 5, width = 7, dpi = 400)
+}
+```
+# 1.32. Plot T: results from mean DO GAMs by year
+Results of Model D.
+#max(DO_count$year) was listed as do_count, corrected for code to run
+```{r}
+# Load the DO GAM results
+gam_2 <- readRDS(here(plotsave,
+     "statistical_analysis",
+                    "ModelD_GAM_results_DO.rds"))
+
+maxyr <- max(DO_count$year)
+
+temp3 <- cbind(dmin_gam, fit = gam_2$fitted.values)
+for(the_year in c(2016:maxyr)){
+  print(the_year)
+  temp3 %>% filter(yearf == the_year) %>%
+  ggplot() +
+  geom_vline(xintercept = 196, lty = 2, color = "darkgray") +  
+  geom_point(aes(x = day, y = min_DO), color = "darkgray") +
+  geom_line(aes(x = day, y = fit), color = "salmon") +
+  facet_wrap(~site) +
+  theme_bw() +
+  labs(x = "", y = "Daily minimum dissolved oxygen",
+       title = paste0("GAM results: ", the_year)) +
+  theme(text = element_text(size = 14),
+        axis.text.x = element_text(size = 9),
+        strip.background = element_rect(fill = "white")) + 
+  scale_x_continuous(
+    breaks = c(91, 152, 213, 274, 335),
+    labels = c("Apr", "Jun", "Aug",
+               "Oct", "Dec")
+  )
+
+ggsave(paste0(plotsave,
+              "PlotT_GAM_DO/GAM_plots_DO_",
+              the_year, ".png"),
+       height = 5, width = 7, dpi = 400)
+}
+
+```
