@@ -1,5 +1,5 @@
 # River Data
-Code to analyze and visualize river water quality monitoring data including data loggers (temperature, DO, turbidity) and macroinvertebrate/habitat quality indices. See "output" folder for examples.
+Code to analyze and visualize river water quality monitoring data including data loggers (temperature, DO, turbidity) and macroinvertebrate/habitat quality indices. See "output" folder for examples. Original code designed by Mike Allen; historical repository can be found at: https://github.com/mikeallen-eco/river.git
 
 ## Steps to run this code
 0. Make sure you have R and RStudio installed.
