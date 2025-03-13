@@ -1,0 +1,1925 @@
+---
+title: "Invertebrates and Habitat"
+author: "Mike Allen"
+date: "4/28/2022"
+output: html_document
+---
+# How to run this code
+Run the first section ("chunk") of this Rmd document (section 4.0). That will load all libraries, functions, and data. After that, you can scroll down to the plot or table you wish to make or the model you wish to run and run just that section. Plots, tables and models are labeled with letters (A-Z) and correspond to those in the "Task 4" sub-folder in the "output" folder. See the README file in that sub-folder for figure captions and information.
+
+The following text is a general description of Task 4.
+
+# Task 4: Macroinvertebrates and quality scores
+a. Visualize and perform statistical analysis of macroinvertebrate and EPA Habitat Assessment scores, including assessing spatial patterns and temporal trends. 
+
+1. Where do sites fall on the optimum/excellent to poor spectrum? 
+2. How are scores changing over time at the level of the
+individual site and within the broader network as a whole?
+
+b. How are the individual component metrics contributing to the resulting macroinvertebrate and EPA Habitat Assessment scores at the sites? 
+
+For example, are all “Poor” sites classified as such for
+the same reason or are there a range of contributing factors?
+
+# 4.0. Load libraries and read in data
+```{r}
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(here)
+library(lubridate)
+library(forcats)
+library(GGally)
+library(fmsb)
+library(wesanderson)
+library(lme4)
+source("scripts/load_monthly_logger_data.R")
+source("scripts/future_macro_function.R")
+source("scripts/future_hab_function.R")
+
+# set path to save plots and other output to
+task_path <- "output/Task4_inverts_and_habitat/"
+
+# path where the Macroinvertebrate and Habitat Quality data are stored
+mh_path <- "data/Macro_Habitat"
+
+# Next we read in macroinvertebrate data one year at a time
+  # this was necessary as they all had slightly different formats
+
+# Read in Macroinvertebrate data - 2016
+inv16 <- read_xlsx(here(mh_path,
+                        "macro_habitat_data_2016_2017.xlsx"),
+                   skip = 2, 
+                   sheet = "macro_2016"
+                   ) %>%
+  select(c(3,4,32:40)) %>%
+  rename(num_gen = 3,
+         pct_noninsect = 4,
+         pct_ept = 5,
+         num_scraper = 6,
+         hilsenhoff = 7,
+         num_talu2 = 8,
+         num_talu3 = 9,
+         index = 10,
+         rating = 11
+         )
+
+# Read in Macroinvertebrate data - 2017
+inv17 <- read_xlsx(here(mh_path,
+                        "macro_habitat_data_2016_2017.xlsx"),
+                   skip = 3, 
+                   sheet = "macro_2017"
+                   ) %>%
+  select(c(3,4,32:40)) %>%
+  rename(tnc_code = 1,
+         date = 2,
+         num_gen = 3,
+         pct_noninsect = 4,
+         pct_ept = 5,
+         num_scraper = 6,
+         hilsenhoff = 7,
+         num_talu2 = 8,
+         num_talu3 = 9,
+         index = 10,
+         rating = 11
+         )
+
+# Read in Macroinvertebrate data - 2018
+inv18 <- read_xlsx(here(mh_path,
+                        "macro_habitat_data_2018_2019.xlsx"),
+                   skip = 3, 
+                   sheet = "macro_2018"
+                   ) %>%
+  select(c(3,4,32:40)) %>%
+  rename(tnc_code = 1,
+         date = 2,
+         num_gen = 3,
+         pct_noninsect = 4,
+         pct_ept = 5,
+         num_scraper = 6,
+         hilsenhoff = 7,
+         num_talu2 = 8,
+         num_talu3 = 9,
+         index = 10,
+         rating = 11
+         ) %>%
+  filter(is.na(tnc_code) == F)
+
+# Read in Macroinvertebrate data - 2019
+inv19 <- read_xlsx(here(mh_path,
+                        "macro_habitat_data_2018_2019.xlsx"),
+                   skip = 2, 
+                   sheet = "macro_2019"
+                   ) %>%
+  select(c(3,4,32:40)+1) %>%
+  rename(num_gen = 3,
+         pct_noninsect = 4,
+         pct_ept = 5,
+         num_scraper = 6,
+         hilsenhoff = 7,
+         num_talu2 = 8,
+         num_talu3 = 9,
+         index = 10,
+         rating = 11
+         )
+
+# Read in Macroinvertebrate data - 2020
+inv20 <- read_xlsx(here(mh_path,
+                        "macro_habitat_data_2020_2021.xlsx"),
+                   skip = 3, 
+                   sheet = "macro_2020"
+                   ) %>%
+  select(c(3,4,32:40)) %>%
+  rename(tnc_code = 1,
+         date = 2,
+         num_gen = 3,
+         pct_noninsect = 4,
+         pct_ept = 5,
+         num_scraper = 6,
+         hilsenhoff = 7,
+         num_talu2 = 8,
+         num_talu3 = 9,
+         index = 10,
+         rating = 11
+         ) %>%
+  filter(is.na(num_gen) != T)
+
+# Read in Macroinvertebrate data - 2021
+inv21 <- read_xlsx(here(mh_path,
+                        "macro_habitat_data_2020_2021.xlsx"),
+                   skip = 2, 
+                   sheet = "macro_2021"
+                   ) %>%
+  select(c(3,4,32:40)+1) %>%
+  rename(num_gen = 3,
+         pct_noninsect = 4,
+         pct_ept = 5,
+         num_scraper = 6,
+         hilsenhoff = 7,
+         num_talu2 = 8,
+         num_talu3 = 9,
+         index = 10,
+         rating = 11
+         )
+
+# Check if 2022-2026 macroinvertebrate data exists. If so, then load it.
+inv22 <- read_xlsx(here(mh_path,
+                        "macro_habitat_data_2022_2023.xlsx"),
+                   skip = 3, 
+                   sheet = "macro_2022"
+                   ) %>%
+  select(c(3,4,32:40)) %>%
+  rename(tnc_code = 1,
+         date = 2,
+         num_gen = 3,
+         pct_noninsect = 4,
+         pct_ept = 5,
+         num_scraper = 6,
+         hilsenhoff = 7,
+         num_talu2 = 8,
+         num_talu3 = 9,
+         index = 10,
+         rating = 11
+         ) %>%
+  filter(is.na(num_gen) != T)
+
+#column added before 'tnc_code' so adjusted all 'select' columns up by 1 (e.g., 4 instead of 3 for tnc_code)
+inv23 <- read_xlsx(here(mh_path,
+                        "macro_habitat_data_2022_2023.xlsx"),
+                   skip = 2, 
+                   sheet = "macro_2023"
+                   ) %>%
+  select(c(4,5,33:41)) %>%
+  rename(num_gen = 3,
+         pct_noninsect = 4,
+         pct_ept = 5,
+         num_scraper = 6,
+         hilsenhoff = 7,
+         num_talu2 = 8,
+         num_talu3 = 9,
+         index = 10,
+         rating = 11
+         )
+
+#another column was added- 'client sample id' so column numbers in 'select' needed to be adjusted to 33:41 instead of 32:40
+inv24 <- read_xlsx(here(mh_path,
+                        "macro_habitat_data_2024_2025.xlsx"),
+                   skip = 3, 
+                   sheet = "macro_2024"
+                   ) %>%
+  select(c(3,4,33:41)) %>%
+  rename(tnc_code = 1,
+         date = 2,
+         num_gen = 3,
+         pct_noninsect = 4,
+         pct_ept = 5,
+         num_scraper = 6,
+         hilsenhoff = 7,
+         num_talu2 = 8,
+         num_talu3 = 9,
+         index = 10,
+         rating = 11
+         ) %>%
+  filter(is.na(num_gen) != T)
+
+
+inv25 <- future_macro("2025")
+inv26 <- future_macro("2026")
+
+# Compile all Macroinvertebrate data into one data frame
+inv <- inv16 %>%
+  bind_rows(inv17) %>%
+  bind_rows(inv18) %>%
+  bind_rows(inv19) %>%
+  bind_rows(inv20) %>%
+  bind_rows(inv21) %>%
+  bind_rows(inv22) %>%
+  bind_rows(inv23) %>%
+  bind_rows(inv24) %>%
+  bind_rows(inv25) %>%
+  bind_rows(inv26) %>%
+  mutate(year = year(date),
+         yearf = as.factor(year)) %>%
+  mutate(yearf = fct_reorder(yearf, index, .fun = "mean"),
+         tnc_code = fct_reorder(tnc_code, index, .fun = "mean"),
+         rating = case_when(rating == "EXCELLENT" ~ "Excellent",
+                            rating == "GOOD" ~ "Good",
+                            rating == "FAIR" ~ "Fair",
+                            rating == "POOR" ~ "Poor",
+                            TRUE ~ rating))
+
+# remove data frames of individual years
+rm(inv16, inv17, inv18, inv19, inv20, inv21,
+   inv22, inv23, inv24, inv25, inv26)
+
+# Next we read in habitat data one year at a time
+  # this was necessary as they all had slightly different formats
+
+# Read in habitat data - 2016
+hab16 <- read_xlsx(here(mh_path,
+                        "macro_habitat_data_2016_2017.xlsx"),
+                   skip = 0, 
+                   sheet = "Habitat_2016"
+                   ) %>%
+  select(c(3:17,19:20)) %>%
+  rename(epifaunal_sub = 3,
+         pool_sub = 4,
+         pool_var = 5,
+         sed_dep = 6,
+         channel_flow = 7,
+         channel_alt = 8,
+         channel_sin = 9,
+         bank_stab_l = 10,
+         bank_stab_r = 11,
+         bank_veg_l = 12,
+         bank_veg_r = 13,
+         rip_veg_l = 14,
+         rip_veg_r = 15)
+
+# Read in habitat data - 2017
+hab17 <- read_xlsx(here(mh_path,
+                        "macro_habitat_data_2016_2017.xlsx"),
+                   skip = 0, 
+                   sheet = "Habitat_2017"
+                   ) %>%
+  select(c(3:17,19:20)) %>%
+  rename(epifaunal_sub = 3,
+         pool_sub = 4,
+         pool_var = 5,
+         sed_dep = 6,
+         channel_flow = 7,
+         channel_alt = 8,
+         channel_sin = 9,
+         bank_stab_l = 10,
+         bank_stab_r = 11,
+         bank_veg_l = 12,
+         bank_veg_r = 13,
+         rip_veg_l = 14,
+         rip_veg_r = 15)
+
+# Read in habitat data - 2018
+hab18 <- read_xlsx(here(mh_path,
+                        "macro_habitat_data_2018_2019.xlsx"),
+                   skip = 0, 
+                   sheet = "Habitat_2018"
+                   ) %>%
+  select(c(3:17,19:20)) %>%
+  rename(epifaunal_sub = 3,
+         pool_sub = 4,
+         pool_var = 5,
+         sed_dep = 6,
+         channel_flow = 7,
+         channel_alt = 8,
+         channel_sin = 9,
+         bank_stab_l = 10,
+         bank_stab_r = 11,
+         bank_veg_l = 12,
+         bank_veg_r = 13,
+         rip_veg_l = 14,
+         rip_veg_r = 15)
+
+# note: I fixed a typo in Habitat_2019 tab manually:
+#         TNC_6	4/12/2019 was TNC_6	4/12/12019
+# Read in habitat data - 2019
+hab19 <- read_xlsx(here(mh_path,
+                        "macro_habitat_data_2018_2019.xlsx"),
+                   skip = 0, 
+                   sheet = "Habitat_2019"
+                   ) %>%
+  select(c(3:17,19:20)) %>%
+  rename(epifaunal_sub = 3,
+         pool_sub = 4,
+         pool_var = 5,
+         sed_dep = 6,
+         channel_flow = 7,
+         channel_alt = 8,
+         channel_sin = 9,
+         bank_stab_l = 10,
+         bank_stab_r = 11,
+         bank_veg_l = 12,
+         bank_veg_r = 13,
+         rip_veg_l = 14,
+         rip_veg_r = 15)
+
+# Read in habitat data - 2020
+hab20 <- read_xlsx(here(mh_path,
+                        "macro_habitat_data_2020_2021.xlsx"),
+                   skip = 0, 
+                   sheet = "Habitat_2020"
+                   ) %>%
+  select(c(3:17,18,20)) %>%
+  rename(epifaunal_sub = 3,
+         pool_sub = 4,
+         pool_var = 5,
+         sed_dep = 6,
+         channel_flow = 7,
+         channel_alt = 8,
+         channel_sin = 9,
+         bank_stab_l = 10,
+         bank_stab_r = 11,
+         bank_veg_l = 12,
+         bank_veg_r = 13,
+         rip_veg_l = 14,
+         rip_veg_r = 15,
+         habitat_score = 16)
+
+# Read in habitat data - 2021
+hab21 <- read_xlsx(here(mh_path,
+                        "macro_habitat_data_2020_2021.xlsx"),
+                   skip = 0, 
+                   sheet = "Habitat_2021"
+                   ) %>%
+  select(c(3:17,19:20)) %>%
+  rename(epifaunal_sub = 3,
+         pool_sub = 4,
+         pool_var = 5,
+         sed_dep = 6,
+         channel_flow = 7,
+         channel_alt = 8,
+         channel_sin = 9,
+         bank_stab_l = 10,
+         bank_stab_r = 11,
+         bank_veg_l = 12,
+         bank_veg_r = 13,
+         rip_veg_l = 14,
+         rip_veg_r = 15)
+
+# Check if 2022-2026 habitat data exists. If so, then load it.
+hab22 <- read_xlsx(here(mh_path,
+                        "macro_habitat_data_2022_2023.xlsx"),
+                   skip = 0, 
+                   sheet = "Habitat_2022"
+                   ) %>%
+  select(c(3:17,18,20)) %>%
+  rename(epifaunal_sub = 3,
+         pool_sub = 4,
+         pool_var = 5,
+         sed_dep = 6,
+         channel_flow = 7,
+         channel_alt = 8,
+         channel_sin = 9,
+         bank_stab_l = 10,
+         bank_stab_r = 11,
+         bank_veg_l = 12,
+         bank_veg_r = 13,
+         rip_veg_l = 14,
+         rip_veg_r = 15,
+         habitat_score = 16)
+
+hab23 <- read_xlsx(here(mh_path,
+                        "macro_habitat_data_2022_2023.xlsx"),
+                   skip = 0, 
+                   sheet = "Habitat_2023"
+                   ) %>%
+  select(c(3:17,18,20)) %>%
+  rename(epifaunal_sub = 3,
+         pool_sub = 4,
+         pool_var = 5,
+         sed_dep = 6,
+         channel_flow = 7,
+         channel_alt = 8,
+         channel_sin = 9,
+         bank_stab_l = 10,
+         bank_stab_r = 11,
+         bank_veg_l = 12,
+         bank_veg_r = 13,
+         rip_veg_l = 14,
+         rip_veg_r = 15,
+         habitat_score = 16)
+
+hab24 <- read_xlsx(here(mh_path,
+                        "macro_habitat_data_2024_2025.xlsx"),
+                   skip = 0, 
+                   sheet = "Habitat_2024"
+                   ) %>%
+  select(c(3:17,18,20)) %>%
+  rename(epifaunal_sub = 3,
+         pool_sub = 4,
+         pool_var = 5,
+         sed_dep = 6,
+         channel_flow = 7,
+         channel_alt = 8,
+         channel_sin = 9,
+         bank_stab_l = 10,
+         bank_stab_r = 11,
+         bank_veg_l = 12,
+         bank_veg_r = 13,
+         rip_veg_l = 14,
+         rip_veg_r = 15,
+         habitat_score = 16)
+
+
+hab25 <- future_hab("2025")
+hab26 <- future_hab("2026")
+
+# Compile all Habitat data into one data frame
+hab <- hab16 %>%
+  bind_rows(hab17) %>%
+  bind_rows(hab18) %>%
+  bind_rows(hab19) %>%
+  bind_rows(hab20) %>%
+  bind_rows(hab21) %>%
+  bind_rows(hab22) %>%
+  bind_rows(hab23) %>%
+  bind_rows(hab24) %>%
+  bind_rows(hab25) %>%
+  bind_rows(hab26) %>%
+  rename(date = date_collected) %>%
+  mutate(year = year(date),
+         yearf = as.factor(year)) %>%
+  mutate(yearf = fct_reorder(yearf, habitat_score, .fun = "mean"),
+         tnc_code = fct_reorder(tnc_code, habitat_score, 
+                                .fun = "mean"),
+         rip_veg = rip_veg_r + rip_veg_l,
+         bank_veg = bank_veg_r + bank_veg_l,
+         bank_stab = bank_stab_r + bank_stab_l) %>%
+  select(-c(bank_stab_l, bank_stab_r,
+            bank_veg_l, bank_veg_r,
+            rip_veg_l, rip_veg_r)) %>%
+  mutate(habitat_rating = case_when(habitat_rating == "OPTIMAL" ~
+                                      "Optimal",
+                                    habitat_rating == "SUB-OPTIMAL" ~
+                                      "Sub-Optimal",
+                                    TRUE ~ habitat_rating))
+
+# remove data frames of individual years
+rm(hab16, hab17, hab18, hab19, hab20, hab21,
+   hab22, hab23, hab24, hab25, hab26)
+
+# Create data frame of mean July temperatures for each site
+tsum_july <- tsum_month %>%
+  filter(Month == "July") %>%
+  group_by(site) %>%
+  summarise(mean_july_temp = mean(mean_mean),
+            .groups = "drop") %>%
+  rename(tnc_code = site)
+
+# Create data frame of mean July DO for each site
+dosum_july <- dosum_month %>%
+  filter(month == 7) %>%
+  group_by(site) %>%
+  summarise(mean_july_do = mean(mean_mean),
+            .groups = "drop") %>%
+  rename(tnc_code = site)
+
+# combine habitat, macroinvertebrate, mean July temp & DO data
+hab.inv <- hab %>%
+  left_join(inv, by = c("tnc_code", "year", "yearf")) %>%
+  group_by(tnc_code) %>%
+  summarize(index_mean = mean(index, na.rm = T),
+            index_min = min(index, na.rm = T),
+            index_max = max(index, na.rm = T),
+            index_n = sum(is.na(index)==F),
+            hab_mean = mean(habitat_score, na.rm = T),
+            hab_min = min(habitat_score, na.rm = T),
+            hab_max = max(habitat_score, na.rm = T),
+            hab_n = sum(is.na(habitat_score)==F)) %>%
+  mutate(index_n2 = paste0(c(rep("",20),"n = "), index_n),
+         hab_n2 = paste0(c(rep("",20),"n = "), hab_n),
+         num = gsub(tnc_code, pattern = "TNC_", 
+                    replacement = "")) %>%
+  left_join(tsum_july, by = "tnc_code") %>%
+  left_join(dosum_july, by = "tnc_code")
+```
+# 4.1. Plot A: average macroinvertebrate index by site/year
+```{r}
+color_vector <- c("olivedrab",
+            "olivedrab2",
+            wes_palettes$BottleRocket2[1:2])
+
+inv.plot <- inv %>%
+  group_by(tnc_code, year) %>%
+  summarize(index = mean(index),
+            .groups = "drop") %>%
+  group_by(tnc_code) %>%
+  summarize(index_mean = mean(index),
+            min = min(index),
+            max = max(index),
+            n = length(index)) %>%
+  mutate(n2 = paste0(c(rep("",22),"n = "), n),
+         Rating = case_when(index_mean >= 63 ~ "Excellent",
+                            index_mean < 63 & 
+                              index_mean >= 42 ~ "Good",
+                            index_mean < 42 &
+                              index_mean >= 21 ~ "Fair",
+                            index_mean < 21 ~ "Poor")) %>%
+  mutate(Rating = fct_reorder(Rating, index_mean, .desc = T)) 
+
+inv.plot %>%
+  ggplot() +
+  geom_vline(xintercept = 63, lty = 2, color = color_vector[1],
+             alpha = 0.75) +
+  geom_vline(xintercept = 42, lty = 2, color = color_vector[2],
+             alpha = 0.75) +
+  geom_vline(xintercept = 21, lty = 2, color = color_vector[3],
+             alpha = 0.75) +
+  geom_vline(xintercept = 0, lty = 2, color = color_vector[4],
+             alpha = 0.75) +  
+  geom_errorbar(aes(xmin = min, xmax = max, y = tnc_code),
+                width = 0, color = "black",
+                size = .75) +  
+  geom_point(aes(x = index_mean, y = tnc_code, fill = Rating),
+             size = 3, shape = 21) +
+  scale_fill_manual(values = color_vector) +
+  theme_classic() +
+  labs(y = "", x = "Macroinvertebrate Index") +
+  geom_text(aes(x = 110, y = tnc_code, label = n2),
+            color = "darkgray", hjust = 1)
+
+ggsave(here(task_path,
+            "PlotA_mean_macroinvertebrate_index_by_site.png"),
+       height = 4, width = 4.5, dpi = 400)
+
+rm(inv.plot)
+```
+# 4.2. Plot B: data visualization of macroinvertebrate index components
+Scatterplot matrix to inspect data. Code adapte from:
+https://www.r-bloggers.com/2016/02/multiple-regression-lines-in-ggpairs/
+```{r}
+# create ggpairs plot 
+my_smooth_fn <- function(data, mapping, ...){
+  p <- ggplot(data = data, mapping = mapping) + 
+    geom_point(color = "steelblue", alpha = 0.5, 
+               shape = 1, size = 1) + 
+    # geom_density_2d(color = "black", size = 0.5, alpha = 0.5) +
+    geom_smooth(method=loess, fill="steelblue", color="black", size = 0.5, ...)
+  p
+}
+
+my_bar_fn <- function(data, mapping, ...){
+  the_mean <- mean(data)
+  p <- ggplot(data = data, mapping = mapping) + 
+    geom_histogram(color = "darkblue", 
+                   fill = "steelblue", alpha = 0.5, bins = 15) +
+    geom_vline(xintercept = mean(data$x), color = "red")
+}
+
+#require(scales)
+options(scipen=10000, digits = 1)
+g = ggpairs(inv, columns = 3:9, 
+            lower = list(continuous = my_smooth_fn),
+            diag = list(continuous = my_bar_fn),
+            upper = list(continuous = wrap("cor", method = "spearman")),
+            columnLabels = c("No. genera",
+                             "% non-insects",
+                             "% sens. EPT",
+                             "No. scrapers",
+                             "Hilsenhoff",
+                             "No. TALU 2",
+                             "No. TALU 3")
+            ) +
+  theme_bw()
+g
+
+ggsave(plot = g, here(task_path,
+               "PlotB_macroinvertebrate_scatterplot_matrix.png"),
+       dpi = 400, width = 7, height = 7)
+
+rm(g)
+```
+# 4.3. Plot C: Spiderweb plot of macroinvertebrate index components
+Code adapted from: https://r-graph-gallery.com/142-basic-radar-chart.html
+```{r}
+# format data
+inv_radar <- inv %>%
+  select(c(1, 3:9)) %>%
+  group_by(tnc_code) %>%
+  summarize_all(mean)
+
+for(i in 1:nrow(inv_radar)){
+
+print(i)
+
+the_title <- as.character(inv_radar$tnc_code[i])
+
+png(here(task_path, 
+         "PlotC_macro_radar_plots",
+         paste0("PlotC_", the_title, "_macro_radar.png")), res = 400,
+    height = 5, width = 5, units = "in")
+
+# data
+data <- inv_radar[i,2:8]
+
+# add 2 lines to the dataframe: the max and min you want to show on the plot
+data <- rbind(rep(100,7) , rep(0,7) , data)
+ 
+# Make the radarChart !
+radarchart( data  , axistype=1 , maxmin = T,
+ 
+    #custom polygon
+    pcol=rgb(0.2,0.5,0.5,0.9) , pfcol=rgb(0.2,0.5,0.5,0.5) , plwd=4 , 
+ 
+    #custom the grid
+    cglcol="grey", cglty=1, axislabcol="grey", caxislabels=seq(0,100,25),
+    cglwd=0.8,
+ 
+    #custom labels
+    vlcex=0.8, title = the_title
+    )
+dev.off()
+}
+```
+# 4.4. Plot D: macroinvertebrate index over time (separate plots by site)
+```{r}
+# for testing
+i <- unique(inv$tnc_code)[12]
+for(i in unique(inv$tnc_code)){
+
+print(i)
+
+color_vector <- c("olivedrab",
+            "olivedrab2",
+            wes_palettes$BottleRocket2[1:2])
+
+plot_data <- inv %>%
+  mutate(rating = fct_reorder(rating, index, .desc = T)) %>%
+  filter(tnc_code == i) 
+
+plot_data %>%
+  group_by(year) %>%
+  summarize(index = mean(index)) %>%
+  ggplot() +
+  geom_hline(yintercept = 63, lty = 2, color = color_vector[1],
+             alpha = 0.75) +
+  geom_hline(yintercept = 42, lty = 2, color = color_vector[2],
+             alpha = 0.75) +
+  geom_hline(yintercept = 21, lty = 2, color = color_vector[3],
+             alpha = 0.75) +
+  geom_hline(yintercept = 0, lty = 2, color = color_vector[4],
+             alpha = 0.75) +
+  geom_line(aes(x = year, y = index), 
+            color = "darkgray",
+            size = 1) +
+  geom_point(aes(x = year, y = index, color = rating), 
+            size = 4, data = plot_data) +
+  scale_y_continuous(limits = c(0, 100)) +
+  scale_x_continuous(breaks = 2016:2050) +
+  scale_color_manual(values = color_vector,
+                     drop = F) +
+    theme_classic() +
+    theme(text = element_text(size = 14)) +
+    labs(y = "Macroinvertebrate Index", x = "",
+         color = "Rating",
+         title = i)
+
+ggsave(here(task_path, "PlotD_macro_by_year",
+              paste0("PlotD_macro_by_year_site_", i, ".png")),
+         width = 6, height = 4, dpi = 400)
+}
+
+```
+# 4.5. Plot E: macroinvertebrate index over time at Columbia Dam sites
+```{r}
+sites <- c("TNC_25", "TNC_23", "TNC_80")
+
+color_vector <- c("olivedrab",
+            "olivedrab2",
+            wes_palettes$BottleRocket2[1:2])
+
+columbia_macro_data <- inv %>%
+  filter(tnc_code %in% sites) %>%
+  group_by(tnc_code, year) %>%
+  summarize(index = mean(index)) %>%
+  mutate(col = case_when(index >= 63 ~ color_vector[1],
+                            index < 63 & 
+                              index >= 42 ~ color_vector[2],
+                            index < 42 &
+                              index >= 21 ~ color_vector[3],
+                            index < 21 ~ color_vector[4]))
+  
+columbia_macro_data %>%
+  ggplot() +
+  geom_hline(yintercept = 63, lty = 3, color = color_vector[1],
+             alpha = 0.75) +
+  annotate("text", x = 2015.9, y = 63+2, vjust = 0, hjust = 0.4,
+           label = "Excellent",
+           angle = 0, color = color_vector[1],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_hline(yintercept = 42, lty = 3, color = color_vector[2],
+             alpha = 0.75) +
+  annotate("text", x = 2015.9, y = 42+2, vjust = 0, hjust = 0.5,
+           label = "Good",
+           angle = 0, color = color_vector[2],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_hline(yintercept = 21, lty = 3, color = color_vector[3],
+             alpha = 0.75) +
+  annotate("text", x = 2015.9, y = 21+2, vjust = 0, hjust = 0.5,
+           label = "Fair",
+           angle = 0, color = color_vector[3],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_hline(yintercept = 0, lty = 3, color = color_vector[4],
+             alpha = 0.75) +
+  annotate("text", x = 2015.9, y = 2, vjust = 0, hjust = 0.5,
+           label = "Poor",
+           angle = 0, color = color_vector[4],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_line(aes(x = year, y = index, lty = tnc_code), 
+            size = .75, alpha = 1, color = "darkgray") +
+  geom_point(aes(x = year, y = index, fill = tnc_code), 
+            size = 4, shape = 21) +
+   scale_y_continuous(limits = c(0, 100)) +
+   scale_fill_manual(values = c("white", 
+                                 "darkgray", 
+                                "black")) +
+    theme_classic() +
+    theme(text = element_text(size = 14)) +
+    labs(y = "Macroinvertebrate Index", x = "",
+         title = "Columbia Dam", fill = "", lty = "")
+
+  ggsave(here(task_path, 
+              "PlotE_macro_by_year_Columbia_Dam.png"),
+         width = 6, height = 4, dpi = 400)
+```
+# 4.6. Plot F: macroinvertebrate index over time at Paulina Dam sites
+```{r}
+sites <- c("TNC_18", "TNC_19")
+
+color_vector <- c("olivedrab",
+            "olivedrab2",
+            wes_palettes$BottleRocket2[1:2])
+
+paulina_macro_data <- inv %>%
+  filter(tnc_code %in% sites) %>%
+  group_by(tnc_code, year) %>%
+  summarize(index = mean(index)) %>%
+  mutate(col = case_when(index >= 63 ~ color_vector[1],
+                            index < 63 & 
+                              index >= 42 ~ color_vector[2],
+                            index < 42 &
+                              index >= 21 ~ color_vector[3],
+                            index < 21 ~ color_vector[4]))
+  
+paulina_macro_data %>%
+  ggplot() +
+  geom_hline(yintercept = 63, lty = 3, color = color_vector[1],
+             alpha = 0.75) +
+  annotate("text", x = 2015.9, y = 63+2, vjust = 0, hjust = 0.4,
+           label = "Excellent",
+           angle = 0, color = color_vector[1],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_hline(yintercept = 42, lty = 3, color = color_vector[2],
+             alpha = 0.75) +
+  annotate("text", x = 2015.9, y = 42+2, vjust = 0, hjust = 0.5,
+           label = "Good",
+           angle = 0, color = color_vector[2],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_hline(yintercept = 21, lty = 3, color = color_vector[3],
+             alpha = 0.75) +
+  annotate("text", x = 2015.9, y = 21+2, vjust = 0, hjust = 0.5,
+           label = "Fair",
+           angle = 0, color = color_vector[3],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_hline(yintercept = 0, lty = 3, color = color_vector[4],
+             alpha = 0.75) +
+  annotate("text", x = 2015.9, y = 2, vjust = 0, hjust = 0.5,
+           label = "Poor",
+           angle = 0, color = color_vector[4],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_line(aes(x = year, y = index, lty = tnc_code), 
+            size = .75, alpha = 1, color = "darkgray") +
+  geom_point(aes(x = year, y = index, fill = tnc_code), 
+            size = 4, shape = 21) +
+  scale_y_continuous(limits = c(0, 100)) +
+  scale_fill_manual(values = c("white", 
+                                "darkgray", 
+                                "black")) +
+    theme_bw() +
+    theme(text = element_text(size = 14)) +
+    labs(y = "Macroinvertebrate Index", x = "",
+         title = "Paulina Dam", fill = "", lty = "")
+
+  ggsave(here(task_path, 
+              "PlotF_macro_by_year_Paulina_Dam.png"),
+         width = 6, height = 4, dpi = 400)
+
+```
+# 4.7. Plot G: dot plot of overall index average habitat score by site/year
+```{r}
+# create a vector of colors for Optimal -> Poor
+color_vector <- c("olivedrab",
+            "olivedrab2",
+            wes_palettes$BottleRocket2[1:2])
+
+hab.plot <- hab %>%
+  group_by(tnc_code) %>%
+  summarize(index_mean = mean(habitat_score),
+            min = min(habitat_score),
+            max = max(habitat_score),
+            n = length(habitat_score)) %>%
+  # this part allows "Poor" to be included in legend
+  bind_rows(data.frame(tnc_code="temp", 
+                       index_mean=0,
+                       max=0,
+                       min=0,
+                       n=0)) %>%
+  mutate(n2 = paste0(c(rep("",22),"n = "), n),
+         Rating = case_when(index_mean >= 160 ~ "Optimal",
+                            index_mean < 160 & 
+                              index_mean >= 110 ~ "Sub-optimal",
+                            index_mean < 110 &
+                              index_mean >= 60 ~ "Marginal",
+                            index_mean < 60 ~ "Poor")) %>%
+  mutate(Rating = fct_reorder(Rating, index_mean, .desc = T),
+         tnc_code = fct_reorder(tnc_code, index_mean, .desc = F)) %>%
+  filter(tnc_code != "temp")
+
+hab.plot %>%
+  ggplot() +
+  geom_vline(xintercept = 160, lty = 2, color = color_vector[1],
+             alpha = 0.75) +
+  geom_vline(xintercept = 110, lty = 2, color = color_vector[2],
+             alpha = 0.75) +
+  geom_vline(xintercept = 60, lty = 2, color = color_vector[3],
+             alpha = 0.75) +
+  geom_vline(xintercept = 0, lty = 2, color = color_vector[4],
+             alpha = 0.75) +  
+  geom_errorbar(aes(xmin = min, xmax = max, y = tnc_code),
+                width = 0, color = "black",
+                size = .75) +  
+  geom_point(aes(x = index_mean, y = tnc_code, fill = Rating),
+             size = 3, 
+             shape = 21) +
+  scale_fill_manual(values = color_vector,
+                    drop = F) +
+  scale_x_continuous(breaks = c(0,50,100,150,200),
+                     labels = c(0,50,100,150,200)) +
+  theme_classic() +
+  labs(y = "", x = "Habitat Score") +
+  geom_text(aes(x = 255, y = tnc_code, label = n2),
+            color = "darkgray", hjust = 1)
+
+ggsave(here(task_path,
+            "PlotG_mean_habitat_score_by_site.png"),
+       height = 4, width = 4.5, dpi = 400)
+```
+# 4.8. Plot H: macroinvertebrate index vs. habitat score
+```{r}
+# create a color vector
+color_vector <- c("olivedrab",
+            "olivedrab2",
+            wes_palettes$BottleRocket2[1:2])
+
+hab %>%
+  left_join(inv, by = c("tnc_code", "year", "yearf")) %>%
+  group_by(tnc_code) %>%
+  summarize(index_mean = mean(index, na.rm = T),
+            index_min = min(index, na.rm = T),
+            index_max = max(index, na.rm = T),
+            index_n = sum(is.na(index)==F),
+            hab_mean = mean(habitat_score, na.rm = T),
+            hab_min = min(habitat_score, na.rm = T),
+            hab_max = max(habitat_score, na.rm = T),
+            hab_n = sum(is.na(habitat_score)==F)) %>%
+  mutate(index_n2 = paste0(c(rep("",20),"n = "), index_n),
+         hab_n2 = paste0(c(rep("",20),"n = "), hab_n),
+         num = gsub(tnc_code, pattern = "TNC_", 
+                    replacement = "")) %>%
+  ggplot() +
+  geom_vline(xintercept = 160, lty = 2, color = color_vector[1],
+             alpha = 0.75) +
+  annotate("text", x = 160+2, y = 10.5, vjust = 1, hjust = 0.5,
+           label = "Optimal",
+           angle = 90, color = color_vector[1],
+           size = 2.5,
+             alpha = 0.75) +  
+  geom_vline(xintercept = 110, lty = 2, color = color_vector[2],
+             alpha = 0.75) +
+  annotate("text", x = 110+2, y = 10.5, vjust = 1, hjust = 0.5,
+           label = "Sub-optimal",
+           angle = 90, color = color_vector[2],
+           size = 2.5,
+             alpha = 0.75) +   
+  geom_vline(xintercept = 60, lty = 2, color = color_vector[3],
+             alpha = 0.75) +
+  annotate("text", x = 60+2, y = 10.5, vjust = 1, hjust = 0.5,
+           label = "Marginal",
+           angle = 90, color = color_vector[3],
+           size = 2.5,
+             alpha = 0.75) +    
+  geom_vline(xintercept = 0, lty = 2, color = color_vector[4],
+             alpha = 0.75) +
+  annotate("text", x = 0+2, y = 10.5, vjust = 1, hjust = 0.5,
+           label = "Poor",
+           angle = 90, color = color_vector[4],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_hline(yintercept = 63, lty = 2, color = color_vector[1],
+             alpha = 0.75) +
+  annotate("text", x = 0+30, y = 63+2, vjust = 0, hjust = 0.5,
+           label = "Excellent",
+           angle = 0, color = color_vector[1],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_hline(yintercept = 42, lty = 2, color = color_vector[2],
+             alpha = 0.75) +
+  annotate("text", x = 0+30, y = 42+2, vjust = 0, hjust = 0.5,
+           label = "Good",
+           angle = 0, color = color_vector[2],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_hline(yintercept = 21, lty = 2, color = color_vector[3],
+             alpha = 0.75) +
+  annotate("text", x = 0+30, y = 21+2, vjust = 0, hjust = 0.5,
+           label = "Fair",
+           angle = 0, color = color_vector[3],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_hline(yintercept = 0, lty = 2, color = color_vector[4],
+             alpha = 0.75) +
+  annotate("text", x = 0+30, y = 2, vjust = 0, hjust = 0.5,
+           label = "Poor",
+           angle = 0, color = color_vector[4],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_errorbar(aes(xmin = hab_min, xmax = hab_max, y = index_mean),
+                width = 0, color = "darkgray",
+                size = .75, alpha = .5) +  
+  geom_errorbar(aes(ymin = index_min, 
+                    ymax = index_max, x = hab_mean),
+                width = 0, color = "darkgray",
+                size = .75, alpha = .5) +  
+  geom_point(aes(y = index_mean, x = hab_mean),
+             size = 5, fill = "darkgray", 
+             shape = 21) +
+  theme_classic() +
+  labs(x = "Habitat score",
+       y = "Macroinvertebrate index") +
+  geom_text(aes(y = index_mean, x = hab_mean, label = num),
+            color = "white", hjust = .5, size = 2.5)
+
+ggsave(here(task_path,
+            "PlotH_habitat_score_vs_macro_by_site.png"),
+       height = 4, width = 5, dpi = 400)
+```
+# 4.9. Plot I: data visualization of habitat score components
+Scatterplot matrix to inspect data
+1. Epifaunal Substrate/Available Cover	2. Pool Substrate Characterization	3. Pool variability	4. Sediment Deposition	5. Channel Flow Status	6. Channel Alteration	7. Channel sinuosity	8. Bank Stability-LB	8. Bank Stability-RB	9. Bank vegetation Protection-LB	9. Bank vegetation Protection-RB	10. Ripariarn Vegetation Zone Width-LB	10. Ripariarn Vegetation Zone Width-RB
+
+```{r}
+
+# ggpairs plot. Found code here:
+# https://www.r-bloggers.com/2016/02/multiple-regression-lines-in-ggpairs/
+my_smooth_fn <- function(data, mapping, ...){
+  p <- ggplot(data = data, mapping = mapping) + 
+    geom_point(color = "steelblue", alpha = 0.5, 
+               shape = 1, size = 1) + 
+    # geom_density_2d(color = "black", size = 0.5, alpha = 0.5) +
+    geom_smooth(method=loess, fill="steelblue", color="black", size = 0.5, ...)
+  p
+}
+
+my_bar_fn <- function(data, mapping, ...){
+  the_mean <- mean(data)
+  p <- ggplot(data = data, mapping = mapping) + 
+    geom_histogram(color = "darkblue", 
+                   fill = "steelblue", alpha = 0.5, bins = 15) +
+    geom_vline(xintercept = mean(data$x), color = "red")
+}
+
+#require(scales)
+options(scipen=10000, digits = 1)
+g = ggpairs(hab, columns = c(3:9,14:16,10), 
+            lower = list(continuous = my_smooth_fn),
+            diag = list(continuous = my_bar_fn),
+            upper = list(continuous = wrap("cor", method = "spearman")),
+            columnLabels = c("Epifaun. sub.",
+                             "Pool sub.",
+                             "Pool var.",
+                             "Sediment dep.",
+                             "Channel flow",
+                             "Channel alt.",
+                             "Channel sin.",
+                             "Rip. zone",
+                             "Bank veg",
+                             "Bank stab.",
+                             "Habitat score")
+            ) +
+  theme_bw() +
+  theme(strip.text = element_text(size = 6))
+g
+
+ggsave(plot = g, here(task_path,
+               "PlotI_habitat_scatterplot_matrix2.png"),
+       dpi = 400, width = 10, height = 10)
+
+rm(g)
+```
+# 4.10. Plot J: Spiderweb plot of habitat score components
+```{r}
+# format data
+hab_radar <- hab %>%
+  select(c(1, 3:9, 14:16)) %>%
+  group_by(tnc_code) %>%
+  summarize_all(mean)
+
+
+for(i in 1:nrow(hab_radar)){
+
+print(i)
+
+the_title <- as.character(hab_radar$tnc_code[i])
+
+png(here(task_path, 
+         "PlotJ_habitat_radar_plots",
+         paste0("PlotJ_", the_title, "_habitat_radar.png")), 
+    res = 400,
+    height = 5, width = 5, units = "in")
+
+# data
+data <- hab_radar[i,2:11]
+
+# add 2 lines to the dataframe: the max/min you want to show on plot
+data <- rbind(rep(20,10) , rep(0,10) , data)
+ 
+# Make the radarChart !
+radarchart( data  , axistype=1 , maxmin = T,
+ 
+    #custom polygon
+    pcol=rgb(0.2,0.5,0.5,0.9) , pfcol=rgb(0.2,0.5,0.5,0.5) , plwd=4 , 
+ 
+    #custom the grid
+    cglcol="grey", cglty=1, axislabcol="grey", caxislabels=seq(0,20,5),
+    cglwd=0.8,
+ 
+    #custom labels
+    vlcex=0.8, title = the_title
+    )
+dev.off()
+}
+```
+# 4.11. Plot K: habitat score over time (separate plots by site)
+```{r}
+for(i in unique(hab$tnc_code)){
+
+print(i)
+ 
+color_vector <- co <- c("olivedrab",
+            "olivedrab2",
+            wes_palettes$BottleRocket2[1:2])
+
+plot_data <- hab %>%
+  select(tnc_code, year, habitat_rating, habitat_score) %>%
+  bind_rows(data.frame(tnc_code = "filler",
+                       year = 2016, 
+                       habitat_rating = "Poor", 
+                       habitat_score = 0)) %>%
+  mutate(habitat_rating = fct_reorder(habitat_rating, habitat_score, 
+                              .desc = T)) %>%
+  filter(tnc_code == i)
+
+hab %>%
+  filter(tnc_code == i) %>%
+  group_by(year, habitat_rating) %>%
+  summarize(habitat_score = mean(habitat_score, na.rm = T),
+            .groups = "drop") %>%
+  ggplot() +
+  geom_hline(yintercept = 160, lty = 2, color = color_vector[1],
+             alpha = 0.75) +
+  geom_hline(yintercept = 110, lty = 2, color = color_vector[2],
+             alpha = 0.75) +
+  geom_hline(yintercept = 60, lty = 2, color = color_vector[3],
+             alpha = 0.75) +
+  geom_hline(yintercept = 0, lty = 2, color = color_vector[4],
+             alpha = 0.75) +
+  geom_line(aes(x = year, y = habitat_score), 
+            color = "darkgray",
+            size = 1) +
+  geom_point(aes(x = year, y = habitat_score, 
+                 fill = habitat_rating), 
+             shape = 21,
+            size = 4, data = plot_data) +
+  scale_y_continuous(limits = c(0, 200)) +
+  scale_x_continuous(breaks = 2016:2050) +
+  scale_fill_manual(values = color_vector,
+                     drop = F) +
+    theme_classic() +
+    theme(text = element_text(size = 14)) +
+    labs(y = "Habitat Score", x = "",
+         fill = "Rating",
+         title = i)
+
+  ggsave(here(task_path, "PlotK_habitat_score_by_year",
+              paste0("PlotK_hab_score_by_year_site_", i, ".png")),
+         width = 6, height = 4, dpi = 400)
+}
+```
+# 4.12. Plot L: habitat & macroinvertebrate index over time 
+separate plots by site
+```{r}
+for(i in unique(inv$tnc_code)){
+
+print(i)
+
+color_vector_inv <- c("olivedrab",
+            "olivedrab2",
+            wes_palettes$BottleRocket2[1:2])
+
+color_vector_hab <- c("olivedrab",
+            wes_palettes$BottleRocket2[1:2])
+
+plot_data_inv <- inv %>%
+  mutate(rating = fct_reorder(rating, index, .desc = T)) %>%
+  filter(tnc_code == i) %>%
+  select(year, rating, index) %>%
+  mutate(type = "Macroinvertebrates")
+
+line_data_inv <- plot_data_inv %>%
+  group_by(year) %>%
+  summarize(index = mean(index)) %>%
+  mutate(type = "Macroinvertebrates")
+
+plot_data_hab <- hab %>%
+  mutate(habitat_rating = fct_reorder(habitat_rating, habitat_score, 
+                              .desc = T)) %>%
+  filter(tnc_code == i) %>%
+  select(year, rating = habitat_rating, index = habitat_score) %>%
+  mutate(type = "Habitat",
+         index = index/2)
+
+line_data_hab <- plot_data_hab %>%
+  group_by(year, rating) %>%
+  summarize(index = mean(index, na.rm = T),
+            .groups = "drop") %>%
+  select(year, index = index) %>%
+  mutate(type = "Habitat",
+         index = index)
+
+line_data <- line_data_inv %>%
+  bind_rows(line_data_hab)
+
+plot_data <- plot_data_inv %>%
+  bind_rows(plot_data_hab)
+
+max_yr <- max(plot_data$year)
+  
+topline <- data.frame(type = c("Habitat","Habitat",                               "Macroinvertebrates","Macroinvertebrates"),
+                      year = rep(c(2016, max_yr), 2),
+                     index = c(160/2,160/2, 63, 63),
+                     rating = c("Optimal", "Optimal", 
+                                "Excellent", "Excellent")
+  )
+
+midline <- data.frame(type = c("Habitat","Habitat", 
+                              "Macroinvertebrates",
+                              "Macroinvertebrates"),
+                      year = rep(c(2016, max_yr), 2),
+                     index = c(110/2,110/2, 42, 42),
+                     rating = c("Sub-optimal", "Sub-optimal", 
+                                "Good", "Good")
+  )
+
+botline <- data.frame(type = c("Habitat","Habitat", 
+                               "Macroinvertebrates",
+                               "Macroinvertebrates"),
+                      year = rep(c(2016, max_yr), 2),
+                     index = c(60/2,60/2, 21, 21),
+                     rating = c("Marginal", "Marginal", 
+                                "Fair", "Fair")
+  )
+
+zeroline <- data.frame(type = c("Habitat","Habitat", 
+                               "Macroinvertebrates",
+                               "Macroinvertebrates"),
+                      year = rep(c(2016, max_yr), 2),
+                     index = c(0, 0, 0, 0),
+                     rating = rep("Poor", 4)
+  )
+
+# set x value to place Optimal-Poor annotations
+options(digits = 9)
+ann_loc <- max(plot_data$year)- 0.5
+
+ggplot() +
+  # top threshold line
+  geom_line(aes(x = year, y = index), lty = 2, 
+            color = color_vector[1],
+             alpha = 0.75,
+            data = topline) +
+  geom_text(aes(x = ann_loc, y = index+2.5, label = rating),
+            data = topline, size = 2,
+            color = co[1], hjust = .5,
+            alpha = .75) +
+  # mid threshold line
+  geom_line(aes(x = year, y = index), lty = 2, 
+            color = c(color_vector[2], 
+                      color_vector[2],
+                      color_vector[2],
+                      color_vector[2]),
+             alpha = 0.75,
+            data = midline) +
+  geom_text(aes(x = ann_loc, y = index+2.5, label = rating),
+            data = midline, size = 2,
+            color = co[2], hjust = .5,
+            alpha = .75) +
+  # bottom threshold line
+  geom_line(aes(x = year, y = index), lty = 2, 
+            color = c(color_vector[3]),
+             alpha = 0.75,
+            data = botline) +
+  geom_text(aes(x = ann_loc, y = index+2.5, label = rating),
+            data = botline, size = 2,
+            color = co[3], hjust = .5,
+            alpha = .75) +
+    # zero threshold line
+  geom_line(aes(x = year, y = index), lty = 2, 
+            color = c(color_vector[4]),
+             alpha = 0.75,
+            data = zeroline) +
+  geom_text(aes(x = ann_loc, y = index+2.5, label = rating),
+            data = zeroline, size = 2,
+            color = co[4], hjust = .5,
+            alpha = .75) +
+  geom_line(aes(x = year, y = index), 
+            color = "darkgray",
+            size = 1,
+            data = line_data) +
+  geom_point(aes(x = year, y = index, fill = rating), 
+            size = 4, shape = 21, data = plot_data) +
+  scale_y_continuous(limits = c(0,100)) +
+  scale_x_continuous(breaks = 2016:2050) +
+  facet_wrap(~type) +
+  theme_bw() +
+  guides(fill = "none") +
+  # note: this color order works because factor levels are in this order
+  scale_fill_manual(values = c(color_vector_inv, color_vector_inv),
+                     drop = F) +
+  theme(text = element_text(size = 14),
+        strip.background = element_rect(fill = "white"),
+        axis.text.x = element_text(size = 9)) +
+  labs(y = "Index value", x = "",
+         title = i)
+
+ggsave(here(task_path, "PlotL_habitat_and_invert_by_year",
+              paste0("PlotL_macro_and_hab_by_year_site_", i, ".png")),
+         width = 6, height = 4, dpi = 400)
+}
+```
+# 4.13. Plot M: mean habitat & macroinvertebrate index over time (all sites)
+One plot showing mean +/- 2SE for all sites
+```{r}
+co <- color_vector <- c("olivedrab",
+            "olivedrab2",
+            wes_palettes$BottleRocket2[1:2])
+
+plot_data_inv <- inv %>%
+  group_by(tnc_code, year) %>%
+  summarise(index = mean(index), 
+            .groups = "drop") %>%
+  group_by(tnc_code) %>%
+  mutate(n_years = length(index)) %>%
+  ungroup() %>%
+  # use this filter command to remove certain years
+  # or remove sites with less than some number of years of data
+  filter(n_years >= 1,
+         year != 2029) %>%
+  group_by(year) %>%
+  summarise(index_mean = mean(index),
+            index_sd = sd(index),
+            n = length(index),
+            index_se = index_sd/sqrt(n), 
+            .groups = "drop") %>%
+  mutate(rating = case_when(index_mean >= 63 ~ "Excellent",
+                            index_mean < 63 & 
+                              index_mean >= 42 ~ "Good",
+                            index_mean < 42 &
+                              index_mean >= 21 ~ "Fair",
+                            index_mean < 21 ~ "Poor")) %>%
+  mutate(col = case_when(index_mean >= 63 ~ co[1],
+                            index_mean < 63 & 
+                              index_mean >= 42 ~ co[2],
+                            index_mean < 42 &
+                              index_mean >= 21 ~ co[3],
+                            index_mean < 21 ~ co[4])) %>%
+  mutate(rating = fct_reorder(rating, index_mean, .desc = T)) %>%
+  select(year, rating, index_mean, index_se, n, col) %>%
+  mutate(type = "Macroinvertebrates")
+
+plot_data_hab <- hab %>%
+  rename(index = habitat_score) %>%
+  mutate(index = index/2) %>%
+  group_by(tnc_code, year) %>%
+  summarise(index = mean(index), 
+            .groups = "drop") %>%
+  group_by(tnc_code) %>%
+  mutate(n_years = length(index)) %>%
+  ungroup() %>%
+  # use this filter command to remove certain years
+  # or remove sites with less than some number of years of data
+  filter(n_years >= 1,
+         year != 2029) %>%
+  group_by(year) %>%
+  summarise(index_mean = mean(index),
+            index_sd = sd(index),
+            n = length(index),
+            index_se = index_sd/sqrt(n), 
+            .groups = "drop") %>%
+  mutate(rating = case_when(index_mean >= 160/2 ~ "Optimal",
+                            index_mean < 160/2 & 
+                              index_mean >= 110/2 ~ "Sub-optimal",
+                            index_mean < 110/2 &
+                              index_mean >= 60/2 ~ "Marginal",
+                            index_mean < 60/2 ~ "Poor")) %>%
+  mutate(col = case_when(index_mean >= 160/2 ~ co[1],
+                            index_mean < 160/2 & 
+                              index_mean >= 110/2 ~ co[2],
+                            index_mean < 60/2 &
+                              index_mean >= 60/2 ~ co[3],
+                            index_mean < 60/2 ~ co[4])) %>%
+  mutate(rating = fct_reorder(rating, .x = index_mean, .desc = F)) %>%
+  select(year, rating, index_mean, index_se, n, col) %>%
+  mutate(type = "Habitat")
+
+plot_data <- plot_data_inv %>%
+  bind_rows(plot_data_hab) %>%
+  rename(index = index_mean)
+  
+topline <- data.frame(type = c("Habitat","Habitat",                               "Macroinvertebrates","Macroinvertebrates"),
+                     year = rep(c(min(plot_data$year),
+                                  max(plot_data$year)),2),
+                     index = c(160/2,160/2, 63, 63),
+                     rating = c("Optimal", "Optimal", 
+                                "Excellent", "Excellent")
+  )
+
+midline <- data.frame(type = c("Habitat","Habitat", 
+                              "Macroinvertebrates",
+                              "Macroinvertebrates"),
+                     year = rep(c(min(plot_data$year),
+                                  max(plot_data$year)),2),
+                     index = c(110/2,110/2, 42, 42),
+                     rating = c("Sub-optimal", "Sub-optimal", 
+                                "Good", "Good")
+  )
+
+botline <- data.frame(type = c("Habitat","Habitat", 
+                               "Macroinvertebrates",
+                               "Macroinvertebrates"),
+                     year = rep(c(min(plot_data$year),
+                                  max(plot_data$year)),2),
+                     index = c(60/2,60/2, 21, 21),
+                     rating = c("Marginal", "Marginal", 
+                                "Fair", "Fair")
+  )
+
+zeroline <- data.frame(type = c("Habitat","Habitat", 
+                               "Macroinvertebrates",
+                               "Macroinvertebrates"),
+                     year = rep(c(min(plot_data$year),
+                                  max(plot_data$year)),2),
+                     index = c(0, 0, 0, 0),
+                     rating = rep("Poor", 4)
+  )
+
+# set x value to place Optimal-Poor annotations
+options(digits = 9)
+ann_loc <- max(plot_data$year)- 0.5
+
+# get maximumn year
+max_yr <- max(plot_data$year)
+
+ggplot() +
+  # top threshold line
+  geom_line(aes(x = year, y = index), lty = 2, 
+            color = color_vector[1],
+             alpha = 0.75,
+            data = topline) +
+  geom_text(aes(x = ann_loc, y = index+2.5, label = rating),
+            data = topline, size = 2,
+            color = co[1], hjust = .5,
+            alpha = .75) +
+  # mid threshold line
+  geom_line(aes(x = year, y = index), lty = 2, 
+            color = c(color_vector[2], 
+                      color_vector[2],
+                      color_vector[2],
+                      color_vector[2]),
+             alpha = 0.75,
+            data = midline) +
+  geom_text(aes(x = ann_loc, y = index+2.5, label = rating),
+            data = midline, size = 2,
+            color = co[2], hjust = .5,
+            alpha = .75) +
+  # bottom threshold line
+  geom_line(aes(x = year, y = index), lty = 2, 
+            color = c(color_vector[3]),
+             alpha = 0.75,
+            data = botline) +
+  geom_text(aes(x = ann_loc, y = index+2.5, label = rating),
+            data = botline, size = 2,
+            color = co[3], hjust = .5,
+            alpha = .75) +
+    # zero threshold line
+  geom_line(aes(x = year, y = index), lty = 2, 
+            color = c(color_vector[4]),
+             alpha = 0.75,
+            data = zeroline) +
+  geom_text(aes(x = ann_loc, y = index+2.5, label = rating),
+            data = zeroline, size = 2,
+            color = co[4], hjust = .5,
+            alpha = .75) +
+  geom_line(aes(x = year, y = index), 
+            color = "darkgray",
+            size = 1,
+            data = plot_data) +
+  geom_errorbar(aes(x = year, ymin = index-2*index_se,
+                    ymax = index+2*index_se),
+                width = 0, size = 1, data = plot_data) +
+  geom_point(aes(x = year, y = index, fill = rating), 
+            size = 4, data = plot_data, fill = plot_data$col,
+            shape = 21) +
+  scale_y_continuous(limits = c(0,100)) +
+  scale_x_continuous(breaks = 2016:2050) +
+  facet_wrap(~type) +
+  guides(fill = "none") +
+  geom_text(aes(x = year, y = 5, label = n),
+            color = "darkgray",
+            data = plot_data,
+            size = 3.5) +
+  annotate(geom = "text", x = 2016, y = 11, 
+           label = "No. locations:",
+           color = "darkgray",
+           hjust = .1) +
+  theme_bw() +
+  theme(text = element_text(size = 14),
+        strip.background = element_rect(fill = "white"),
+        axis.text.x = element_text(size = 9)) +
+  labs(x = "", y = "Mean index value\n(+/- 2 SE)")
+
+ggsave(here(task_path, 
+              paste0("PlotM_mean_macro_and_hab_by_year",
+                     "_all_sites.png")),
+         width = 6, height = 4, dpi = 400)
+```
+# 4.14. Plot N: macroinvertebrate index vs. habitat score + temperature
+Based on Plot H, but color coding points based on mean monthly 
+```{r}
+color_vector <- c("olivedrab",
+            "olivedrab2",
+            wes_palettes$BottleRocket2[1:2])
+
+hab.inv %>%
+  ggplot() +
+  geom_vline(xintercept = 160, lty = 2, color = color_vector[1],
+             alpha = 0.75) +
+  annotate("text", x = 160+2, y = 10.5, vjust = 1, hjust = 0.5,
+           label = "Optimal",
+           angle = 90, color = color_vector[1],
+           size = 2.5,
+             alpha = 0.75) +  
+  geom_vline(xintercept = 110, lty = 2, color = color_vector[2],
+             alpha = 0.75) +
+  annotate("text", x = 110+2, y = 10.5, vjust = 1, hjust = 0.5,
+           label = "Sub-optimal",
+           angle = 90, color = color_vector[2],
+           size = 2.5,
+             alpha = 0.75) +   
+  geom_vline(xintercept = 60, lty = 2, color = color_vector[3],
+             alpha = 0.75) +
+  annotate("text", x = 60+2, y = 10.5, vjust = 1, hjust = 0.5,
+           label = "Marginal",
+           angle = 90, color = color_vector[3],
+           size = 2.5,
+             alpha = 0.75) +    
+  geom_vline(xintercept = 0, lty = 2, color = color_vector[4],
+             alpha = 0.75) +
+  annotate("text", x = 0+2, y = 10.5, vjust = 1, hjust = 0.5,
+           label = "Poor",
+           angle = 90, color = color_vector[4],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_hline(yintercept = 63, lty = 2, color = color_vector[1],
+             alpha = 0.75) +
+  annotate("text", x = 0+30, y = 63+2, vjust = 0, hjust = 0.5,
+           label = "Excellent",
+           angle = 0, color = color_vector[1],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_hline(yintercept = 42, lty = 2, color = color_vector[2],
+             alpha = 0.75) +
+  annotate("text", x = 0+30, y = 42+2, vjust = 0, hjust = 0.5,
+           label = "Good",
+           angle = 0, color = color_vector[2],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_hline(yintercept = 21, lty = 2, color = color_vector[3],
+             alpha = 0.75) +
+  annotate("text", x = 0+30, y = 21+2, vjust = 0, hjust = 0.5,
+           label = "Fair",
+           angle = 0, color = color_vector[3],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_hline(yintercept = 0, lty = 2, color = color_vector[4],
+             alpha = 0.75) +
+  annotate("text", x = 0+30, y = 2, vjust = 0, hjust = 0.5,
+           label = "Poor",
+           angle = 0, color = color_vector[4],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_errorbar(aes(xmin = hab_min, xmax = hab_max, y = index_mean),
+                width = 0, color = "darkgray",
+                size = .75, alpha = .5) +  
+  geom_errorbar(aes(ymin = index_min, 
+                    ymax = index_max, x = hab_mean),
+                width = 0, color = "darkgray",
+                size = .75, alpha = .5) +  
+  geom_point(aes(y = index_mean, x = hab_mean, fill = mean_july_temp),
+             size = 5, 
+             shape = 21) +
+  scale_fill_viridis_c(option = "inferno") +
+  theme_classic() +
+  labs(x = "Habitat score",
+       y = "Macroinvertebrate index",
+       fill = "Mean\nJuly\ntemp.") +
+  theme(text = element_text(size = 14)) +
+  geom_text(aes(y = index_mean, x = hab_mean, label = num),
+            color = "white", hjust = .5, size = 2.5)
+
+ggsave(here(task_path,
+            "PlotN_habitat_score_vs_macro_by_site_with_July_temp.png"),
+       height = 4, width = 5, dpi = 400)
+```
+# 4.15. Plot O: macroinvertebrate index vs. habitat score + DO
+Based on Plot H, but color coding points based on mean monthly July DO 
+```{r}
+color_vector <- c("olivedrab",
+            "olivedrab2",
+            wes_palettes$BottleRocket2[1:2])
+
+hab.inv %>%
+  ggplot() +
+  geom_vline(xintercept = 160, lty = 2, color = color_vector[1],
+             alpha = 0.75) +
+  annotate("text", x = 160+2, y = 10.5, vjust = 1, hjust = 0.5,
+           label = "Optimal",
+           angle = 90, color = color_vector[1],
+           size = 2.5,
+             alpha = 0.75) +  
+  geom_vline(xintercept = 110, lty = 2, color = color_vector[2],
+             alpha = 0.75) +
+  annotate("text", x = 110+2, y = 10.5, vjust = 1, hjust = 0.5,
+           label = "Sub-optimal",
+           angle = 90, color = color_vector[2],
+           size = 2.5,
+             alpha = 0.75) +   
+  geom_vline(xintercept = 60, lty = 2, color = color_vector[3],
+             alpha = 0.75) +
+  annotate("text", x = 60+2, y = 10.5, vjust = 1, hjust = 0.5,
+           label = "Marginal",
+           angle = 90, color = color_vector[3],
+           size = 2.5,
+             alpha = 0.75) +    
+  geom_vline(xintercept = 0, lty = 2, color = color_vector[4],
+             alpha = 0.75) +
+  annotate("text", x = 0+2, y = 10.5, vjust = 1, hjust = 0.5,
+           label = "Poor",
+           angle = 90, color = color_vector[4],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_hline(yintercept = 63, lty = 2, color = color_vector[1],
+             alpha = 0.75) +
+  annotate("text", x = 0+30, y = 63+2, vjust = 0, hjust = 0.5,
+           label = "Excellent",
+           angle = 0, color = color_vector[1],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_hline(yintercept = 42, lty = 2, color = color_vector[2],
+             alpha = 0.75) +
+  annotate("text", x = 0+30, y = 42+2, vjust = 0, hjust = 0.5,
+           label = "Good",
+           angle = 0, color = color_vector[2],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_hline(yintercept = 21, lty = 2, color = color_vector[3],
+             alpha = 0.75) +
+  annotate("text", x = 0+30, y = 21+2, vjust = 0, hjust = 0.5,
+           label = "Fair",
+           angle = 0, color = color_vector[3],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_hline(yintercept = 0, lty = 2, color = color_vector[4],
+             alpha = 0.75) +
+  annotate("text", x = 0+30, y = 2, vjust = 0, hjust = 0.5,
+           label = "Poor",
+           angle = 0, color = color_vector[4],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_errorbar(aes(xmin = hab_min, xmax = hab_max, y = index_mean),
+                width = 0, color = "darkgray",
+                size = .75, alpha = .5) +  
+  geom_errorbar(aes(ymin = index_min, 
+                    ymax = index_max, x = hab_mean),
+                width = 0, color = "darkgray",
+                size = .75, alpha = .5) +  
+  geom_point(aes(y = index_mean, x = hab_mean, fill = mean_july_do),
+             size = 5, 
+             shape = 21) +
+  scale_fill_viridis_c(option = "viridis") +
+  theme_classic() +
+  labs(x = "Habitat score",
+       y = "Macroinvertebrate index",
+       fill = "Mean\nJuly\nDO") +
+  theme(text = element_text(size = 14)) +
+  geom_text(aes(y = index_mean, x = hab_mean, label = num),
+            color = "white", hjust = .5, size = 2.5)
+
+ggsave(here(task_path,
+            "PlotO_habitat_score_vs_macro_by_site_with_July_DO.png"),
+       height = 4, width = 5, dpi = 400)
+```
+# 4.16. Model A: change in average habitat quality score over time
+See Model A text file in the Task 4 "statistical_analysis" folder.
+```{r}
+# format habitat data, averaging within site/year 
+# and keeping only sites with >= 4 years of data
+hab_data <- hab %>%
+  group_by(tnc_code, year) %>%
+  summarize(index = mean(habitat_score),
+            .groups = "drop") %>%
+  group_by(tnc_code) %>%
+  mutate(n = length(index)) %>%
+  filter(n >= 4)
+
+hab.trend.mod <- lmerTest::lmer(index ~ year + (1 | tnc_code), 
+                      data = hab_data)
+
+summary(hab.trend.mod)
+```
+# 4.17. Model B: change in average macroinvertebrate score over time
+See Model B text file in the Task 4 "statistical_analysis" folder.
+```{r}
+# format habitat data, averaging within site/year 
+# and keeping only sites with >= 4 years of data
+inv_data <- inv %>%
+  group_by(tnc_code, year) %>%
+  summarize(index = mean(index),
+            .groups = "drop") %>%
+  group_by(tnc_code) %>%
+  mutate(n = length(index)) %>%
+  filter(n >= 4)
+
+inv.trend.mod <- lmerTest::lmer(index ~ year + (1 | tnc_code), 
+                      data = inv_data)
+
+summary(inv.trend.mod)
+```
+# 4.18. Model C: GLM of mean invertebrate index vs. mean July temp & DO
+See Model C text file in the Task 4 "statistical_analysis" folder.
+```{r}
+inv.temp.mod <- lm(index_mean ~ mean_july_temp,
+                       data = hab.inv)
+inv.do.mod <- lm(index_mean ~ mean_july_do,
+                       data = hab.inv)
+inv.temp.do.mod <- lm(index_mean ~ mean_july_temp + mean_july_do,
+                       data = hab.inv)
+inv.temp.do.hab.mod <- lm(index_mean ~ mean_july_temp + mean_july_do + 
+                            hab_mean,
+                       data = hab.inv)
+
+AIC(inv.temp.mod, inv.do.mod, inv.temp.do.mod, inv.temp.do.hab.mod)
+
+anova(inv.do.mod, inv.temp.do.mod)
+
+summary(inv.temp.do.mod)
+
+```
+# 4.19. Plot P: mean invertebrate index vs. mean July DO
+```{r}
+color_vector <- c("olivedrab",
+            "olivedrab2",
+            wes_palettes$BottleRocket2[1:2])
+
+num_col <- ifelse(hab.inv$num==9,"black", "white")
+
+hab.inv %>%
+  ggplot() +
+  geom_hline(yintercept = 63, lty = 2, color = color_vector[1],
+             alpha = 0.75) +
+  annotate("text", x = 3, y = 63+2, vjust = 0, hjust = 0,
+           label = "Excellent",
+           angle = 0, color = color_vector[1],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_hline(yintercept = 42, lty = 2, color = color_vector[2],
+             alpha = 0.75) +
+  annotate("text", x = 3, y = 42+2, vjust = 0, hjust = 0,
+           label = "Good",
+           angle = 0, color = color_vector[2],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_hline(yintercept = 21, lty = 2, color = color_vector[3],
+             alpha = 0.75) +
+  annotate("text", x = 3, y = 21+2, vjust = 0, hjust = 0,
+           label = "Fair",
+           angle = 0, color = color_vector[3],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_hline(yintercept = 0, lty = 2, color = color_vector[4],
+             alpha = 0.75) +
+  annotate("text", x = 3, y = 2, vjust = 0, hjust = 0,
+           label = "Poor",
+           angle = 0, color = color_vector[4],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_smooth(aes(x = mean_july_do, y = index_mean),
+              method = "lm", color = "black") +
+  geom_point(aes(x = mean_july_do, y = index_mean,
+                 fill = mean_july_temp),
+             size = 5, shape = 21) +
+  geom_text(aes(y = index_mean, x = mean_july_do, label = num),
+            color = num_col, hjust = .5, size = 2.5) +
+  scale_fill_viridis_c(option = "inferno") +  
+  theme_bw() +
+  theme(text = element_text(size = 15)) +
+  labs(x = "Mean July dissolved oxygen (mg/L)",
+       y = "Mean macroinvertebrate index",
+       fill = "Mean\nJuly\ntemp.")
+
+ggsave(here(task_path,
+            "PlotP_macroindex_vs_JulyDO_by_site_with_July_temp.png"),
+       height = 4, width = 5.5, dpi = 400)
+  
+
+```
+# 4.20. Plot Q: macroinvertebrate index over time at tree planting site
+sites TNC_4, 5, and 8
+```{r}
+sites <- c("TNC_4", "TNC_5", "TNC_8")
+
+color_vector <- c("olivedrab",
+            "olivedrab2",
+            wes_palettes$BottleRocket2[1:2])
+
+tree_macro_data <- inv %>%
+  filter(tnc_code %in% sites) %>%
+  group_by(tnc_code, year) %>%
+  summarize(index = mean(index)) %>%
+  mutate(col = case_when(index >= 63 ~ color_vector[1],
+                            index < 63 & 
+                              index >= 42 ~ color_vector[2],
+                            index < 42 &
+                              index >= 21 ~ color_vector[3],
+                            index < 21 ~ color_vector[4]))
+  
+tree_macro_data %>%
+  ggplot() +
+  geom_hline(yintercept = 63, lty = 3, color = color_vector[1],
+             alpha = 0.75) +
+  annotate("text", x = 2015.9, y = 63+2, vjust = 0, hjust = 0.4,
+           label = "Excellent",
+           angle = 0, color = color_vector[1],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_hline(yintercept = 42, lty = 3, color = color_vector[2],
+             alpha = 0.75) +
+  annotate("text", x = 2015.9, y = 42+2, vjust = 0, hjust = 0.5,
+           label = "Good",
+           angle = 0, color = color_vector[2],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_hline(yintercept = 21, lty = 3, color = color_vector[3],
+             alpha = 0.75) +
+  annotate("text", x = 2015.9, y = 21+2, vjust = 0, hjust = 0.5,
+           label = "Fair",
+           angle = 0, color = color_vector[3],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_hline(yintercept = 0, lty = 3, color = color_vector[4],
+             alpha = 0.75) +
+  annotate("text", x = 2015.9, y = 2, vjust = 0, hjust = 0.5,
+           label = "Poor",
+           angle = 0, color = color_vector[4],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_line(aes(x = year, y = index, lty = tnc_code), 
+            size = .75, alpha = 1, color = "darkgray") +
+  geom_point(aes(x = year, y = index, fill = tnc_code), 
+            size = 4, shape = 21) +
+  scale_y_continuous(limits = c(0, 100)) +
+  scale_fill_manual(values = c("white", 
+                                "darkgray", 
+                                "black")) +
+    theme_bw() +
+    theme(text = element_text(size = 14)) +
+    labs(y = "Macroinvertebrate Index", x = "",
+         title = "Tree planting area", fill = "", lty = "")
+
+  ggsave(here(task_path, 
+              "PlotQ_macro_by_year_tree_planting_site.png"),
+         width = 6, height = 4, dpi = 400)
+
+```
+# 4.21. Plot R: macroinvertebrate index over time at hyper humus
+site TNC_2
+```{r}
+sites <- c("TNC_2")
+
+color_vector <- c("olivedrab",
+            "olivedrab2",
+            wes_palettes$BottleRocket2[1:2])
+
+hyper_macro_data <- inv %>%
+  filter(tnc_code %in% sites) %>%
+  group_by(tnc_code, year) %>%
+  summarize(index = mean(index)) %>%
+  mutate(col = case_when(index >= 63 ~ color_vector[1],
+                            index < 63 & 
+                              index >= 42 ~ color_vector[2],
+                            index < 42 &
+                              index >= 21 ~ color_vector[3],
+                            index < 21 ~ color_vector[4]))
+  
+hyper_macro_data %>%
+  ggplot() +
+  geom_hline(yintercept = 63, lty = 3, color = color_vector[1],
+             alpha = 0.75) +
+  annotate("text", x = 2015.9, y = 63+2, vjust = 0, hjust = 0.4,
+           label = "Excellent",
+           angle = 0, color = color_vector[1],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_hline(yintercept = 42, lty = 3, color = color_vector[2],
+             alpha = 0.75) +
+  annotate("text", x = 2015.9, y = 42+2, vjust = 0, hjust = 0.5,
+           label = "Good",
+           angle = 0, color = color_vector[2],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_hline(yintercept = 21, lty = 3, color = color_vector[3],
+             alpha = 0.75) +
+  annotate("text", x = 2015.9, y = 21+2, vjust = 0, hjust = 0.5,
+           label = "Fair",
+           angle = 0, color = color_vector[3],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_hline(yintercept = 0, lty = 3, color = color_vector[4],
+             alpha = 0.75) +
+  annotate("text", x = 2015.9, y = 2, vjust = 0, hjust = 0.5,
+           label = "Poor",
+           angle = 0, color = color_vector[4],
+           size = 2.5,
+             alpha = 0.75) +
+  geom_line(aes(x = year, y = index, lty = tnc_code), 
+            size = .75, alpha = 1, color = "darkgray") +
+  geom_point(aes(x = year, y = index, fill = tnc_code), 
+            size = 4, shape = 21) +
+  scale_y_continuous(limits = c(0, 100)) +
+  scale_fill_manual(values = c("darkgray", 
+                                "white", 
+                                "black")) +
+    theme_bw() +
+    theme(text = element_text(size = 14)) +
+    labs(y = "Macroinvertebrate Index", x = "",
+         title = "Hyper Humus", fill = "", lty = "")
+
+  ggsave(here(task_path, 
+              "PlotR_macro_by_year_hyper_humus.png"),
+         width = 6, height = 4, dpi = 400)
+```
