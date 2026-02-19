@@ -93,7 +93,7 @@ tmax <- p %>%
                          year == 2021 & 
                          day == 118))) %>%
   right_join(expand.grid(site = unique(p$site), 
-                         year = 2016:2024, day = 82:339)) %>%
+                         year = 2016:2025, day = 82:339)) %>%
   arrange(site, year, day) %>%
   mutate(summer = case_when(day %in% 152:243 ~ 1,
                             TRUE ~ 0))
@@ -160,7 +160,7 @@ dmin <- p %>%
             .groups = "drop") %>%
   droplevels() %>%
   right_join(expand.grid(site = unique(p$site), 
-                         year = 2016:2024, day = 82:339)) %>%
+                         year = 2016:2025, day = 82:339)) %>%
   arrange(site, year, day) %>%
   mutate(summer = case_when(day %in% 152:243 ~ 1,
                             TRUE ~ 0))
@@ -468,9 +468,9 @@ ggplot() +
              size = 4) +
   scale_color_brewer(palette = "Paired") +
   scale_y_continuous(limits = c(0,150)) +
-  scale_x_continuous(breaks = 2016:2024,
-                     labels = as.character(2016:2024),
-                     limits = c(2016, 2024)) +
+  scale_x_continuous(breaks = 2016:2025,
+                     labels = as.character(2016:2025),
+                     limits = c(2016, 2025)) +
   theme_bw() +
   theme(text = element_text(size = 14),
         axis.text.x = element_text(size = 10),
@@ -726,9 +726,9 @@ ggplot() +
              size = 4) +
   scale_color_brewer(palette = "Paired") +
   scale_y_continuous(limits = c(0,150)) +
-  scale_x_continuous(breaks = 2016:2024,
-                     labels = as.character(2016:2024),
-                     limits = c(2016, 2024)) +
+  scale_x_continuous(breaks = 2016:2025,
+                     labels = as.character(2016:2025),
+                     limits = c(2016, 2025)) +
   theme_bw() +
   theme(text = element_text(size = 14),
         axis.text.x = element_text(size = 10),
@@ -918,6 +918,14 @@ year8_mat <- matrix(data = c(rep(0,7*n_sites),
                              rep(1,n_sites),
                              rep(0, length(TMex_mat)-8*n_sites)),
                     ncol = n_years)
+year9_mat <- matrix(data = c(rep(0,8*n_sites), 
+                             rep(1,n_sites),
+                             rep(0, length(TMex_mat)-9*n_sites)),
+                    ncol = n_years)
+year10_mat <- matrix(data = c(rep(0,9*n_sites), 
+                             rep(1,n_sites),
+                             rep(0, length(TMex_mat)-10*n_sites)),
+                    ncol = n_years)
 
 for(i in 1:n_sites){
   for(j in 1:n_years){
@@ -943,6 +951,8 @@ jags_data <- list(n_total = nrow(tstatJAGS),
                   y6 = year6_mat,
                   y7 = year7_mat,
                   y8 = year8_mat,
+                  y9 = year9_mat,
+                  y10 = year10_mat,
                   yearf = yearf_mat,
                   day = tstatJAGS$day,
                   year = as.numeric(tstatJAGS$yearf),
@@ -1108,7 +1118,7 @@ modsum <- jags_mod$summary %>%
                             site == "River mean" &
                               year == 2018 ~ 12,
                             site == "River mean" &
-                              year %in% 2019:2021 ~ 11,
+                              year %in% 2019:2025 ~ 12,
                             TRUE ~ TMex_n))
 
 # used to count number of sites in each year
@@ -1195,6 +1205,14 @@ year8_mat <- matrix(data = c(rep(0,7*n_sites),
                              rep(1,n_sites),
                              rep(0,length(TMexDO_mat)-8*n_sites)),
                     ncol = n_years)
+year9_mat <- matrix(data = c(rep(0,8*n_sites), 
+                             rep(1,n_sites),
+                             rep(0,length(TMexDO_mat)-9*n_sites)),
+                    ncol = n_years)
+year10_mat <- matrix(data = c(rep(0,9*n_sites), 
+                             rep(1,n_sites),
+                             rep(0,length(TMexDO_mat)-10*n_sites)),
+                    ncol = n_years)
 
 for(i in 1:n_sites){
   for(j in 1:n_years){
@@ -1220,6 +1238,8 @@ jags_data_DO <- list(n_total = nrow(dostatJAGS),
                   y6 = year6_mat,
                   y7 = year7_mat, 
                   y8 = year8_mat,
+                  y9 = year9_mat,
+                  y10 = year10_mat,
                   yearf = yearf_mat,
                   day = dostatJAGS$day,
                   year = as.numeric(dostatJAGS$yearf),
@@ -1326,7 +1346,7 @@ modDOsum <- jags_mod_DO$summary %>%
                             site == "River mean" &
                               year == 2018 ~ 12,
                             site == "River mean" &
-                              year %in% 2019:2021 ~ 11,
+                              year %in% 2019:2025 ~ 12,
                             TRUE ~ TMex_n))
 
 # used to count number of sites in each year
@@ -1451,7 +1471,7 @@ modsum <- jags_mod$summary %>%
   select(mean, q2.5 = 3, q97.5 = 7) %>%
   mutate(parameter = row.names(jags_mod$summary)) %>%
   filter(grepl(parameter, pattern = "theta")) %>%
-  mutate(site = rep(unique(tstat$site), 9),
+  mutate(site = rep(unique(tstat$site), 10),
          year = sort(rep(2016:maxyr, numsites))) %>%
   left_join(tstat_plot) %>%
   filter(is.na(TMex_n)==F) %>%

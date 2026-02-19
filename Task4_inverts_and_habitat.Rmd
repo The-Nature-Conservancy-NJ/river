@@ -222,9 +222,25 @@ inv24 <- read_xlsx(here(mh_path,
          ) %>%
   filter(is.na(num_gen) != T)
 
-
-inv25 <- future_macro("2025")
-inv26 <- future_macro("2026")
+inv25 <- read_xlsx(here(mh_path,
+                        "macro_habitat_data_2024_2025.xlsx"),
+                   skip = 3, 
+                   sheet = "macro_2025"
+                   ) %>%
+  select(c(3,4,33:41)) %>%
+  rename(tnc_code = 1,
+         date = 2,
+         num_gen = 3,
+         pct_noninsect = 4,
+         pct_ept = 5,
+         num_scraper = 6,
+         hilsenhoff = 7,
+         num_talu2 = 8,
+         num_talu3 = 9,
+         index = 10,
+         rating = 11
+         ) %>%
+  filter(is.na(num_gen) != T)
 
 # Compile all Macroinvertebrate data into one data frame
 inv <- inv16 %>%
@@ -237,7 +253,6 @@ inv <- inv16 %>%
   bind_rows(inv23) %>%
   bind_rows(inv24) %>%
   bind_rows(inv25) %>%
-  bind_rows(inv26) %>%
   mutate(year = year(date),
          yearf = as.factor(year)) %>%
   mutate(yearf = fct_reorder(yearf, index, .fun = "mean"),
@@ -250,7 +265,7 @@ inv <- inv16 %>%
 
 # remove data frames of individual years
 rm(inv16, inv17, inv18, inv19, inv20, inv21,
-   inv22, inv23, inv24, inv25, inv26)
+   inv22, inv23, inv24, inv25)
 
 # Next we read in habitat data one year at a time
   # this was necessary as they all had slightly different formats
@@ -448,9 +463,27 @@ hab24 <- read_xlsx(here(mh_path,
          rip_veg_r = 15,
          habitat_score = 16)
 
+hab25 <- read_xlsx(here(mh_path,
+                        "macro_habitat_data_2024_2025.xlsx"),
+                   skip = 0, 
+                   sheet = "Habitat_2025"
+                   ) %>%
+  select(c(3:17,18,20)) %>%
+  rename(epifaunal_sub = 3,
+         pool_sub = 4,
+         pool_var = 5,
+         sed_dep = 6,
+         channel_flow = 7,
+         channel_alt = 8,
+         channel_sin = 9,
+         bank_stab_l = 10,
+         bank_stab_r = 11,
+         bank_veg_l = 12,
+         bank_veg_r = 13,
+         rip_veg_l = 14,
+         rip_veg_r = 15,
+         habitat_score = 16)
 
-hab25 <- future_hab("2025")
-hab26 <- future_hab("2026")
 
 # Compile all Habitat data into one data frame
 hab <- hab16 %>%
@@ -463,7 +496,6 @@ hab <- hab16 %>%
   bind_rows(hab23) %>%
   bind_rows(hab24) %>%
   bind_rows(hab25) %>%
-  bind_rows(hab26) %>%
   rename(date = date_collected) %>%
   mutate(year = year(date),
          yearf = as.factor(year)) %>%
@@ -484,7 +516,7 @@ hab <- hab16 %>%
 
 # remove data frames of individual years
 rm(hab16, hab17, hab18, hab19, hab20, hab21,
-   hab22, hab23, hab24, hab25, hab26)
+   hab22, hab23, hab24, hab25)
 
 # Create data frame of mean July temperatures for each site
 tsum_july <- tsum_month %>%
@@ -573,7 +605,7 @@ ggsave(here(task_path,
 rm(inv.plot)
 ```
 # 4.2. Plot B: data visualization of macroinvertebrate index components
-Scatterplot matrix to inspect data. Code adapte from:
+Scatterplot matrix to inspect data. Code adapted from:
 https://www.r-bloggers.com/2016/02/multiple-regression-lines-in-ggpairs/
 ```{r}
 # create ggpairs plot 
@@ -1103,7 +1135,7 @@ print(i)
  
 color_vector <- co <- c("olivedrab",
             "olivedrab2",
-            wes_palettes$BottleRocket2[1:2])
+            wes_palettes$BottleRocket2[1:3])
 
 plot_data <- hab %>%
   select(tnc_code, year, habitat_rating, habitat_score) %>%
@@ -1160,10 +1192,10 @@ print(i)
 
 color_vector_inv <- c("olivedrab",
             "olivedrab2",
-            wes_palettes$BottleRocket2[1:2])
+            wes_palettes$BottleRocket2[1:3])
 
 color_vector_hab <- c("olivedrab",
-            wes_palettes$BottleRocket2[1:2])
+            wes_palettes$BottleRocket2[1:3])
 
 plot_data_inv <- inv %>%
   mutate(rating = fct_reorder(rating, index, .desc = T)) %>%
@@ -1307,7 +1339,7 @@ One plot showing mean +/- 2SE for all sites
 ```{r}
 co <- color_vector <- c("olivedrab",
             "olivedrab2",
-            wes_palettes$BottleRocket2[1:2])
+            wes_palettes$BottleRocket2[1:3])
 
 plot_data_inv <- inv %>%
   group_by(tnc_code, year) %>%

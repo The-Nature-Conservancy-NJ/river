@@ -1136,7 +1136,7 @@ tree %>%
   labs(x = "", y = "Temp. difference (C)\n(restoration area - upstream)",
        title = "Tree planting area",
        color = "Month") +
-  scale_x_discrete(breaks = c(2017,2019,2021)) + 
+  scale_x_discrete(breaks = c(2017,2019,2021,2023)) + 
   scale_color_manual(values = wes_palettes$Darjeeling1) +
   scale_y_continuous(limits = c(-0.5, 1.5)) +
   annotate("text", x = max(as.numeric(treet_jags$yearf)), y = -0.49, 
@@ -1247,7 +1247,7 @@ first notch July 2018, completed April 2019
 colturb %>%
   select(yearf, value = TNC_25) %>%
   bind_rows(select(rename(colturb, value = TNC_23), yearf, value)) %>%
-  mutate(site = c(rep("Downstream", 891), rep("Upstream", 891))) %>%
+  mutate(site = c(rep("Downstream", 1463), rep("Upstream", 1463))) %>%
   ggplot() +
   geom_boxplot(aes(y = value, x = yearf, fill = site, color = site), 
                alpha = 0.5
@@ -1342,7 +1342,11 @@ colturb_jags_mod <- jagsUI::jags(data = colturb_jags_data,
              n.chains = 3, parallel = T, n.thin = 1
              ); colturb_jags_mod
 
-dev.new(6,6);plot(colturb_jags_mod)
+
+op <- par(no.readonly = TRUE)
+par(mfrow = c(1,1), mar = c(4,4,2,1), oma = c(0,0,0,0))
+plot(colturb_jags_mod)
+par(op)
 
 
 # jagsUI::traceplot(colturb_jags_mod)
@@ -1481,8 +1485,8 @@ tsum_paulina %>%
     labels = c("Apr", "Jun", "Aug",
                "Oct", "Dec")
   ) +
-  scale_color_manual(values = c(wes_palettes$Royal1,
-                                wes_palettes$Royal2)) +
+  scale_color_manual(values = c(wes_palettes$BottleRocket1,
+                                wes_palettes$BottleRocket2)) +
   facet_wrap(~site) +
   geom_text(aes(x = mid, y = mean_mean, label = mes),
             hjust = 0, size = 3, vjust = 0,
@@ -2245,8 +2249,8 @@ tsum_col %>%
     labels = c("Apr", "Jun", "Aug",
                "Oct", "Dec")
   ) +
-  scale_color_manual(values = c(wes_palettes$Royal1,
-                                wes_palettes$Royal2)) +
+  scale_color_manual(values = c(wes_palettes$BottleRocket1,
+                                wes_palettes$BottleRocket2)) +
   facet_wrap(~site) +
   geom_text(aes(x = mid, y = mean_mean, label = mes),
             hjust = 0, size = 2, vjust = 0,

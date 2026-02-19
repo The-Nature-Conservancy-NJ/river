@@ -46,7 +46,7 @@ logger_path <- "data/Logger_Data/"
 # 0.1. Read and compile HOBO data using logger_compile function
 This code section runs the "logger_compile" function on the HOBO logger data files from each year to compile data into one big data frame named "hobo". It has built in fixes for errors discovered in the data excel files from 2016-2021. So, any changes to those files will also require changes to this code. [Note: functionality to handle new years through 2026 exists as long as those data are identical in format and file/folder naming convention to the 2021 format. Adding data after that year will require editing the code below to add a new "future_compile" line.]
 ```{r}
-# compile hobo logger data from 2016-2021
+# compile hobo logger data from 2016-2025
 hobo <- logger_compile("2016", type = "hobo") %>%
   bind_rows(logger_compile("2017", type = "hobo")) %>%
   bind_rows(logger_compile("2018", type = "hobo")) %>%
@@ -56,8 +56,8 @@ hobo <- logger_compile("2016", type = "hobo") %>%
   bind_rows(logger_compile("2022", type = "hobo")) %>%
   bind_rows(logger_compile("2023", type = "hobo")) %>%
   bind_rows(logger_compile("2024", type = "hobo")) %>%
- # bind_rows(future_compile("2025", type = "hobo")) %>%
-  #bind_rows(future_compile("2026", type = "hobo")) %>%
+  bind_rows(future_compile("2025", type = "hobo")) %>%
+  
   # remove rows with year = NA (removes ~50k rows)
   filter(is.na(year) != TRUE) %>%
 # fix for 10460 rows in TNC_24_CLDHO_1_2019_masterfile.xlsx
@@ -86,7 +86,7 @@ This code section allows you to perform basic checks on the imported HOBO logger
 str(hobo)
 
 # check which years are included
-unique(hobo$year) # 2016:2021
+unique(hobo$year) # 2016:2025
 
 # check which sites are included
 unique(hobo$site)
@@ -177,8 +177,7 @@ hydro <- logger_compile("2016", type = "hydro") %>%
   bind_rows(logger_compile("2022", type = "hydro")) %>%
   bind_rows(logger_compile("2023", type = "hydro")) %>%
   bind_rows(logger_compile("2024", type = "hydro")) %>%
-  #bind_rows(future_compile("2025", type = "hydro")) %>%
-  #bind_rows(future_compile("2026", type = "hydro")) %>%
+  bind_rows(future_compile("2025", type = "hydro")) %>%
   # remove a 12 row with NA year (and other fields)
   filter(is.na(year) != TRUE,
          is.na(temp) != TRUE)
@@ -257,8 +256,7 @@ pldeur <- logger_compile("2016", type = "pldeur") %>%
   bind_rows(logger_compile("2022", type = "pldeur")) %>%
   bind_rows(logger_compile("2023", type = "pldeur")) %>%
   bind_rows(logger_compile("2024", type = "pldeur")) %>%
-  #bind_rows(future_compile("2025", type = "pldeur")) %>%
-  #bind_rows(future_compile("2026", type = "pldeur")) %>%
+  bind_rows(future_compile("2025", type = "pldeur")) %>%
   # remove rows with NA year (and other fields)
   filter(is.na(year) != TRUE,
          is.na(temp) != TRUE)
